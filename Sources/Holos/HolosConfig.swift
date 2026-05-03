@@ -16,8 +16,8 @@ enum GlowStyle: String, CaseIterable, Codable {
     }
 }
 
-final class TalosConfig: ObservableObject {
-    static let shared = TalosConfig()
+final class HolosConfig: ObservableObject {
+    static let shared = HolosConfig()
 
     @Published var backgroundOpacity: Double = 0.18       { didSet { save() } }
     @Published var blurEnabled: Bool         = true       { didSet { save() } }
@@ -47,7 +47,7 @@ final class TalosConfig: ObservableObject {
 
     private init() {
         let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/stacknode/talos")
+            .appendingPathComponent(".config/stacknode/holos")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         fileURL = dir.appendingPathComponent("config.json")
 

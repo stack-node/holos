@@ -17,6 +17,9 @@ final class PinManager: ObservableObject {
     @Published var isMinimal = false {
         didSet { applyMinimalResize() }
     }
+    @Published var isPinned = true {
+        didSet { applyPinState() }
+    }
     @Published private(set) var isSidebarOpen = false
     @Published private(set) var isRightSidebarOpen = false
 
@@ -41,8 +44,11 @@ final class PinManager: ObservableObject {
     }
 
     func show(near buttonRect: NSRect) {
-        if let p = panel, p.isVisible {
+        // Reuse existing panel — preserves all SwiftUI @State (tabs, sidebar state, etc.)
+        if let p = panel {
             p.makeKeyAndOrderFront(nil)
+            if isSidebarOpen      { sidebarPanel?.makeKeyAndOrderFront(nil) }
+            if isRightSidebarOpen { rightSidebarPanel?.makeKeyAndOrderFront(nil) }
             NSApp.activate(ignoringOtherApps: true)
             isShowing = true
             return
@@ -76,7 +82,7 @@ final class PinManager: ObservableObject {
         p.backgroundColor = .clear
         p.minSize = NSSize(width: 240, height: 240)
 
-        let config = TalosConfig.shared
+        let config = HolosConfig.shared
         let blur = NSVisualEffectView()
         blur.material = config.blurMaterial
         blur.blendingMode = .behindWindow
@@ -101,7 +107,7 @@ final class PinManager: ObservableObject {
         config.$blurStrength
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.blurView?.material = TalosConfig.shared.blurMaterial
+                self?.blurView?.material = HolosConfig.shared.blurMaterial
             }
             .store(in: &cancellables)
 
@@ -119,8 +125,9 @@ final class PinManager: ObservableObject {
     }
 
     func hide() {
-        hideSidebar()
-        hideRightSidebar()
+        // Just hide panels — don't tear down, preserves state for next show
+        sidebarPanel?.orderOut(nil)
+        rightSidebarPanel?.orderOut(nil)
         panel?.orderOut(nil)
         isShowing = false
     }
@@ -180,7 +187,7 @@ final class PinManager: ObservableObject {
             sp.isOpaque = false
             sp.backgroundColor = .clear
 
-            let config = TalosConfig.shared
+            let config = HolosConfig.shared
             let blur = NSVisualEffectView()
             blur.material = config.blurMaterial
             blur.blendingMode = config.blurEnabled ? .behindWindow : .withinWindow
@@ -194,7 +201,7 @@ final class PinManager: ObservableObject {
 
             config.$blurStrength
                 .receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in self?.sidebarBlurView?.material = TalosConfig.shared.blurMaterial }
+                .sink { [weak self] _ in self?.sidebarBlurView?.material = HolosConfig.shared.blurMaterial }
                 .store(in: &cancellables)
             config.$blurEnabled
                 .receive(on: DispatchQueue.main)
@@ -298,7 +305,7 @@ final class PinManager: ObservableObject {
             sp.isOpaque = false
             sp.backgroundColor = .clear
 
-            let config = TalosConfig.shared
+            let config = HolosConfig.shared
             let blur = NSVisualEffectView()
             blur.material = config.blurMaterial
             blur.blendingMode = config.blurEnabled ? .behindWindow : .withinWindow
@@ -312,7 +319,7 @@ final class PinManager: ObservableObject {
 
             config.$blurStrength
                 .receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in self?.rightSidebarBlurView?.material = TalosConfig.shared.blurMaterial }
+                .sink { [weak self] _ in self?.rightSidebarBlurView?.material = HolosConfig.shared.blurMaterial }
                 .store(in: &cancellables)
             config.$blurEnabled
                 .receive(on: DispatchQueue.main)
@@ -404,6 +411,25 @@ final class PinManager: ObservableObject {
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.22
             p.animator().setFrame(newFrame, display: true)
+        }
+    }
+
+    private func applyPinState() {
+        guard let p = panel else { return }
+        if isPinned {
+            p.level = .floating
+            p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            sidebarPanel?.level = .floating
+            sidebarPanel?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            rightSidebarPanel?.level = .floating
+            rightSidebarPanel?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        } else {
+            p.level = .normal
+            p.collectionBehavior = []
+            sidebarPanel?.level = .normal
+            sidebarPanel?.collectionBehavior = []
+            rightSidebarPanel?.level = .normal
+            rightSidebarPanel?.collectionBehavior = []
         }
     }
 }

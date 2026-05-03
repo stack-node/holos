@@ -2,15 +2,15 @@
 import PackageDescription
 
 let package = Package(
-    name: "Talos",
+    name: "Holos",
     platforms: [.macOS(.v13)],
     products: [
-        .executable(name: "Talos", targets: ["Talos"]),
+        .executable(name: "Holos", targets: ["Holos"]),
     ],
     targets: [
         .executableTarget(
-            name: "Talos",
-            path: "Sources/Talos"
+            name: "Holos",
+            path: "Sources/Holos"
         ),
     ]
 )

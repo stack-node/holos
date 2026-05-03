@@ -20,7 +20,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         guard let button = statusItem?.button else { return }
-        button.image = NSImage(systemSymbolName: "brain", accessibilityDescription: "Talos")
+        button.image = NSImage(systemSymbolName: "brain", accessibilityDescription: "Holos")
         button.image?.isTemplate = true
         button.action = #selector(handleClick)
         button.target = self
@@ -35,7 +35,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .running:  name = "brain.head.profile"
         case .failed:   name = "exclamationmark.triangle"
         }
-        statusItem?.button?.image = NSImage(systemSymbolName: name, accessibilityDescription: "Talos")
+        statusItem?.button?.image = NSImage(systemSymbolName: name, accessibilityDescription: "Holos")
         statusItem?.button?.image?.isTemplate = true
     }
 
@@ -56,17 +56,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem?.button,
               let event = NSApp.currentEvent else { return }
         let menu = NSMenu()
-        let placeholder = NSMenuItem(title: "Talos", action: nil, keyEquivalent: "")
+        let placeholder = NSMenuItem(title: "Holos", action: nil, keyEquivalent: "")
         placeholder.isEnabled = false
         menu.addItem(placeholder)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit Talos", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit Holos", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         NSMenu.popUpContextMenu(menu, with: event, for: button)
     }
 }
 
 @main
-struct TalosApp: App {
+struct HolosApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {

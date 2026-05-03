@@ -6,7 +6,7 @@ import AppKit
 struct MenuBarView: View {
     @ObservedObject private var server     = LlamaServer.shared
     @ObservedObject private var chat       = ChatClient.shared
-    @ObservedObject private var config     = TalosConfig.shared
+    @ObservedObject private var config     = HolosConfig.shared
     @ObservedObject private var pinManager = PinManager.shared
     @ObservedObject private var settings   = Settings.shared
     @State private var inputText = ""
@@ -65,7 +65,9 @@ struct MenuBarView: View {
         ZStack {
             // Content
             VStack(spacing: 0) {
-                if nav.selectedTab == "Chats" {
+                if let g = nav.globalTab {
+                    globalPlaceholderPage(for: g)
+                } else if nav.selectedTab == "Chats" {
                     if pinManager.isMinimal {
                         minimalMessagesOverlay
                     } else {
@@ -118,6 +120,10 @@ struct MenuBarView: View {
                         iconButton(pinManager.isMinimal ? "rectangle.expand.vertical" : "rectangle.compress.vertical",
                                    active: pinManager.isMinimal) {
                             pinManager.isMinimal.toggle()
+                        }
+                        iconButton(pinManager.isPinned ? "pin.fill" : "pin",
+                                   active: pinManager.isPinned) {
+                            pinManager.isPinned.toggle()
                         }
                         iconButton("trash", active: false) { chat.clearHistory() }
                         iconButton("terminal", active: showingLog) {
@@ -347,6 +353,31 @@ struct MenuBarView: View {
         )
     }
 
+    private func globalPlaceholderPage(for tab: String) -> some View {
+        let meta: (icon: String, color: Color) = {
+            switch tab {
+            case "Extensions": return ("puzzlepiece.extension", Color(red: 0.55, green: 0.75, blue: 1.00))
+            case "Settings":   return ("gearshape.2",           Color(red: 0.70, green: 0.70, blue: 0.75))
+            default:           return ("square.dashed",         Color.white)
+            }
+        }()
+        return AnyView(
+            VStack(spacing: 14) {
+                Image(systemName: meta.icon)
+                    .font(.system(size: 36, weight: .light))
+                    .foregroundStyle(meta.color.opacity(0.5))
+                Text(tab)
+                    .font(.system(.title3, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.35))
+                Text("Coming soon")
+                    .font(.system(.caption))
+                    .foregroundStyle(.white.opacity(0.2))
+            }
+            .padding(.top, 52)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        )
+    }
+
     // MARK: Minimal overlay (last 3 bubbles, no scrollview)
 
     private var minimalMessagesOverlay: some View {
@@ -410,7 +441,7 @@ struct MenuBarView: View {
             }
             LiquidGlassInput(
                 text: $inputText,
-                placeholder: "Message Talos",
+                placeholder: "Message Holos",
                 isRefining: chat.isRefining,
                 isStreaming: chat.isStreaming,
                 canSend: !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && server.isRunning,
@@ -774,7 +805,7 @@ struct ServerControlView: View {
 // MARK: - Appearance popover
 
 struct AppearanceView: View {
-    @ObservedObject private var config = TalosConfig.shared
+    @ObservedObject private var config = HolosConfig.shared
 
     var body: some View {
         ScrollView {
@@ -1088,6 +1119,7 @@ final class NavigationState: ObservableObject {
     static let shared = NavigationState()
     private init() {}
     @Published var selectedTab: String = "Chats"
+    @Published var globalTab: String? = nil
 }
 
 // MARK: - Sidebar content
@@ -1114,7 +1146,7 @@ private enum SidebarCategory: String, CaseIterable {
 struct SidebarContentView: View {
     @ObservedObject private var nav    = NavigationState.shared
     @ObservedObject private var server = LlamaServer.shared
-    @ObservedObject private var config = TalosConfig.shared
+    @ObservedObject private var config = HolosConfig.shared
     @State private var category: SidebarCategory = .ai
 
     private let aiNavItems: [(icon: String, label: String, color: Color)] = [
@@ -1127,9 +1159,9 @@ struct SidebarContentView: View {
         ("gearshape",                           "Settings",    Color(red: 0.70, green: 0.70, blue: 0.75)),
     ]
 
-    private let bottomItems: [(icon: String, label: String, color: Color)] = [
-        ("questionmark.circle", "Help",     Color(red: 0.70, green: 0.70, blue: 0.75)),
-        ("bubble.left",         "Feedback", Color(red: 0.70, green: 0.70, blue: 0.75)),
+    private let globalItems: [(icon: String, label: String, color: Color)] = [
+        ("puzzlepiece.extension", "Extensions", Color(red: 0.55, green: 0.75, blue: 1.00)),
+        ("gearshape.2",           "Settings",   Color(red: 0.70, green: 0.70, blue: 0.75)),
     ]
 
     var body: some View {
@@ -1138,15 +1170,15 @@ struct SidebarContentView: View {
             HStack(spacing: 6) {
                 ForEach(SidebarCategory.allCases, id: \.self) { cat in
                     Button { withAnimation(.easeInOut(duration: 0.18)) { category = cat } } label: {
-                        HStack(spacing: 5) {
+                        VStack(spacing: 3) {
                             Image(systemName: cat.icon)
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(.system(size: 13, weight: .semibold))
                             Text(cat.rawValue)
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.system(size: 10, weight: .semibold))
                         }
                         .foregroundStyle(category == cat ? cat.color : .white.opacity(0.35))
                         .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
+                        .padding(.vertical, 7)
                         .background(
                             RoundedRectangle(cornerRadius: 7)
                                 .fill(category == cat ? cat.color.opacity(0.15) : Color.clear)
@@ -1191,27 +1223,13 @@ struct SidebarContentView: View {
             Divider().opacity(0.12)
                 .padding(.top, 8)
 
-            // Bottom items
-            ForEach(bottomItems, id: \.label) { item in
-                sidebarRow(icon: item.icon, label: item.label, color: item.color, isSelected: false) {}
-            }
-
-            // User row
-            HStack(spacing: 10) {
-                ZStack {
-                    Circle().fill(Color(red: 0.35, green: 0.35, blue: 0.75))
-                    Text("U")
-                        .font(.system(.caption2, weight: .semibold))
-                        .foregroundStyle(.white)
+            // Global items
+            ForEach(globalItems, id: \.label) { item in
+                sidebarRow(icon: item.icon, label: item.label, color: item.color,
+                           isSelected: nav.globalTab == item.label) {
+                    nav.globalTab = nav.globalTab == item.label ? nil : item.label
                 }
-                .frame(width: 22, height: 22)
-                Text("User")
-                    .font(.system(.callout))
-                    .foregroundStyle(.white.opacity(0.7))
-                Spacer()
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
 
             Divider().opacity(0.10)
 
@@ -1322,7 +1340,7 @@ final class RightSidebarState: ObservableObject {
 
 struct RightSidebarContentView: View {
     @ObservedObject private var rightState = RightSidebarState.shared
-    @ObservedObject private var config     = TalosConfig.shared
+    @ObservedObject private var config     = HolosConfig.shared
 
     var body: some View {
         HStack(spacing: 0) {
@@ -1418,43 +1436,64 @@ private struct CodeEditorPane: View {
     @State private var showingExplorer = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            if rightState.showEmbeddedExplorer {
-                embeddedExplorer
-                Divider().opacity(0.12)
+        VStack(spacing: 0) {
+            // Header row
+            HStack(spacing: 0) {
+                if rightState.showEmbeddedExplorer {
+                    // Icon centered in the explorer-column header box
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(Color.white.opacity(0.08))
+                            .frame(width: 28, height: 28)
+                        Image(systemName: "curlybraces")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
+                    .frame(width: 180)
+                    .frame(maxHeight: .infinity)
+
+                    Divider().opacity(0.12)
+                }
+
+                HStack(spacing: 8) {
+                    if !rightState.showEmbeddedExplorer {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(Color.white.opacity(0.08))
+                                .frame(width: 28, height: 28)
+                            Image(systemName: "curlybraces")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.7))
+                        }
+                    }
+                    Text("Editor")
+                        .font(.system(.callout, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.8))
+                    Spacer()
+                    filePickerButton
+                }
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity)
             }
-            VStack(spacing: 0) {
-                toolbar
-                Divider().opacity(0.12)
+            .padding(.vertical, 8)
+
+            Divider().opacity(0.12)
+
+            // Content row
+            HStack(spacing: 0) {
+                if rightState.showEmbeddedExplorer {
+                    FileExplorerView(onSelect: { item in model.open(item) },
+                                     selectedURL: model.openFile)
+                        .frame(width: 180)
+                        .background(Color.white.opacity(0.02))
+                    Divider().opacity(0.12)
+                }
                 CodeEditorView(text: $model.code, language: model.language)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .preferredColorScheme(.dark)
-    }
-
-    private var embeddedExplorer: some View {
-        FileExplorerView(onSelect: { item in
-            model.open(item)
-        }, selectedURL: model.openFile)
-        .frame(width: 180)
-        .background(Color.white.opacity(0.02))
-    }
-
-    private var toolbar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "curlybraces")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.5))
-            Text("Editor")
-                .font(.system(.callout, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.8))
-            Spacer()
-            filePickerButton
-        }
-        .padding(.leading, 20)
-        .padding(.trailing, 12)
-        .padding(.vertical, 10)
     }
 
     private var filePickerButton: some View {
