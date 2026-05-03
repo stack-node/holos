@@ -2,16 +2,33 @@ import Foundation
 import Combine
 import AppKit
 
+enum GlowStyle: String, CaseIterable, Codable {
+    case off         = "off"
+    case solidColor  = "solidColor"
+    case mimicBorder = "mimicBorder"
+
+    var label: String {
+        switch self {
+        case .off:         return "Off"
+        case .solidColor:  return "Solid Color"
+        case .mimicBorder: return "Mimic Border"
+        }
+    }
+}
+
 final class TalosConfig: ObservableObject {
     static let shared = TalosConfig()
 
-    @Published var backgroundOpacity: Double = 0.18  { didSet { save() } }
-    @Published var blurEnabled: Bool         = true  { didSet { save() } }
-    @Published var blurStrength: Double      = 0.3   { didSet { save() } }
-    @Published var glowEnabled: Bool         = true  { didSet { save() } }
-    @Published var glowIntensity: Double     = 1.0   { didSet { save() } }
-    @Published var glowSize: Double          = 10.0  { didSet { save() } }
-    @Published var glowBlur: Double          = 7.0   { didSet { save() } }
+    @Published var backgroundOpacity: Double = 0.18       { didSet { save() } }
+    @Published var blurEnabled: Bool         = true       { didSet { save() } }
+    @Published var blurStrength: Double      = 0.3        { didSet { save() } }
+    @Published var glowStyle: GlowStyle      = .mimicBorder { didSet { save() } }
+    @Published var glowIntensity: Double     = 1.0        { didSet { save() } }
+    @Published var glowSize: Double          = 10.0       { didSet { save() } }
+    @Published var glowBlur: Double          = 7.0        { didSet { save() } }
+    @Published var glowColorR: Double        = 0.55       { didSet { save() } }
+    @Published var glowColorG: Double        = 0.25       { didSet { save() } }
+    @Published var glowColorB: Double        = 0.95       { didSet { save() } }
 
     private let fileURL: URL
 
@@ -19,10 +36,13 @@ final class TalosConfig: ObservableObject {
         var backgroundOpacity: Double
         var blurEnabled: Bool
         var blurStrength: Double
-        var glowEnabled: Bool
+        var glowStyle: GlowStyle
         var glowIntensity: Double
         var glowSize: Double
         var glowBlur: Double
+        var glowColorR: Double
+        var glowColorG: Double
+        var glowColorB: Double
     }
 
     private init() {
@@ -36,10 +56,13 @@ final class TalosConfig: ObservableObject {
             backgroundOpacity = stored.backgroundOpacity
             blurEnabled       = stored.blurEnabled
             blurStrength      = stored.blurStrength
-            glowEnabled       = stored.glowEnabled
+            glowStyle         = stored.glowStyle
             glowIntensity     = stored.glowIntensity
             glowSize          = stored.glowSize
             glowBlur          = stored.glowBlur
+            glowColorR        = stored.glowColorR
+            glowColorG        = stored.glowColorG
+            glowColorB        = stored.glowColorB
         }
     }
 
@@ -57,10 +80,13 @@ final class TalosConfig: ObservableObject {
             backgroundOpacity: backgroundOpacity,
             blurEnabled: blurEnabled,
             blurStrength: blurStrength,
-            glowEnabled: glowEnabled,
+            glowStyle: glowStyle,
             glowIntensity: glowIntensity,
             glowSize: glowSize,
-            glowBlur: glowBlur
+            glowBlur: glowBlur,
+            glowColorR: glowColorR,
+            glowColorG: glowColorG,
+            glowColorB: glowColorB
         )
         try? JSONEncoder().encode(stored).write(to: fileURL)
     }

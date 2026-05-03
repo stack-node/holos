@@ -115,11 +115,18 @@ final class ChatClient: ObservableObject {
                     "messages": [
                         [
                             "role": "system",
-                            "content": "Rewrite the user's prompt to be clearer and more precise for a coding assistant. Return only the rewritten prompt — no explanation, no preamble, no quotes.",
+                            "content": "You rewrite prompts. Output only the rewritten prompt. No answers, no explanations, no preamble.",
                         ],
+                        ["role": "user", "content": "fix my code"],
+                        ["role": "assistant", "content": "Review the following code for bugs and suggest specific fixes."],
+                        ["role": "user", "content": "make it faster"],
+                        ["role": "assistant", "content": "Identify performance bottlenecks in this code and suggest concrete optimizations."],
+                        ["role": "user", "content": "explain this"],
+                        ["role": "assistant", "content": "Provide a clear, step-by-step explanation of how the following code works."],
                         ["role": "user", "content": trimmed],
                     ],
                     "stream": true,
+                    "temperature": 0,
                     "max_tokens": 300,
                 ]
                 request.httpBody = try JSONSerialization.data(withJSONObject: body)
