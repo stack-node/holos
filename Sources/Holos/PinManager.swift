@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import Combine
 
-private final class KeyablePanel: NSPanel {
+final class KeyablePanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
@@ -29,6 +29,15 @@ final class PinManager: ObservableObject {
     private var blurView: NSVisualEffectView?
     private var sidebarBlurView: NSVisualEffectView?
     private var rightSidebarBlurView: NSVisualEffectView?
+    var mainPanelFrame: NSRect?    { panel?.frame }
+    var sidebarPanelFrame: NSRect? { sidebarPanel?.frame }
+    var stableSidebarFrame: NSRect? {
+        guard let main = panel else { return nil }
+        return sidebarFrame(for: main.frame)
+    }
+
+    private var widgetPanels: [String: NSPanel] = [:]
+
     private var cancellables = Set<AnyCancellable>()
     private var resizeObserver: NSObjectProtocol?
     private var moveObserver: NSObjectProtocol?
@@ -126,6 +135,7 @@ final class PinManager: ObservableObject {
 
     func hide() {
         // Just hide panels — don't tear down, preserves state for next show
+        widgetPanels.values.forEach { $0.orderOut(nil) }
         sidebarPanel?.orderOut(nil)
         rightSidebarPanel?.orderOut(nil)
         panel?.orderOut(nil)
@@ -232,17 +242,20 @@ final class PinManager: ObservableObject {
         // Child window follows parent automatically with zero lag; ordered below = under main
         main.addChildWindow(sp, ordered: .below)
 
-        NSAnimationContext.runAnimationGroup { ctx in
+        NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.25
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             sp.animator().setFrame(target, display: true)
             sp.animator().alphaValue = 1
-        }
+        }, completionHandler: { [weak self] in
+            self?.refreshWidgetPanels()
+        })
 
         let reframeSidebar = { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, let main = self.panel, let sp = self.sidebarPanel else { return }
                 sp.setFrame(self.sidebarFrame(for: main.frame), display: true)
+                self.reframeWidgetPanels()
             }
         }
         resizeObserver = NotificationCenter.default.addObserver(
@@ -263,6 +276,8 @@ final class PinManager: ObservableObject {
         resizeObserver = nil
         moveObserver.map { NotificationCenter.default.removeObserver($0) }
         moveObserver = nil
+
+        hideAllWidgetPanels()
 
         let endFrame = NSRect(x: main.frame.minX - sidebarGap, y: sp.frame.minY,
                               width: sp.frame.width, height: sp.frame.height)
@@ -342,7 +357,7 @@ final class PinManager: ObservableObject {
         guard let sp = rightSidebarPanel else { return }
 
         let target = rightSidebarFrame(for: main.frame)
-        let start  = NSRect(x: main.frame.maxX + sidebarGap, y: target.minY,
+        let start  = NSRect(x: main.frame.maxX - rightSidebarW, y: target.minY,
                             width: rightSidebarW, height: target.height)
 
         sp.setFrame(start, display: false)
@@ -387,7 +402,7 @@ final class PinManager: ObservableObject {
         rightMoveObserver.map { NotificationCenter.default.removeObserver($0) }
         rightMoveObserver = nil
 
-        let endFrame = NSRect(x: main.frame.maxX + rightSidebarW + sidebarGap, y: sp.frame.minY,
+        let endFrame = NSRect(x: main.frame.maxX - rightSidebarW, y: sp.frame.minY,
                               width: rightSidebarW, height: sp.frame.height)
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.2
@@ -400,6 +415,98 @@ final class PinManager: ObservableObject {
         })
 
         isRightSidebarOpen = false
+    }
+
+    // MARK: - Widget panels
+
+    func refreshWidgetPanels() {
+        let mgr = WidgetZoneManager.shared
+        for (zoneID, extID) in mgr.assignments {
+            let shouldShow: Bool
+            switch zoneID {
+            case "below-left-sidebar": shouldShow = isSidebarOpen && isShowing
+            default:                   shouldShow = isShowing
+            }
+            if shouldShow { showWidgetPanel(zoneID: zoneID, extensionID: extID) }
+            else          { hideWidgetPanel(zoneID: zoneID) }
+        }
+        for zoneID in widgetPanels.keys where mgr.assignments[zoneID] == nil {
+            hideWidgetPanel(zoneID: zoneID)
+        }
+    }
+
+    private func showWidgetPanel(zoneID: String, extensionID: String) {
+        guard let frame = WidgetZoneManager.shared.widgetPanelFrame(for: zoneID) else { return }
+        if let existing = widgetPanels[zoneID] {
+            existing.setFrame(frame, display: true)
+            return
+        }
+
+        let config = HolosConfig.shared
+        let blur = NSVisualEffectView()
+        blur.material = config.blurMaterial
+        blur.blendingMode = config.blurEnabled ? .behindWindow : .withinWindow
+        blur.state = .active
+        blur.appearance = NSAppearance(named: .vibrantDark)
+        blur.wantsLayer = true
+        blur.layer?.cornerRadius = 12
+        blur.layer?.masksToBounds = true
+
+        let hosting = NSHostingView(rootView:
+            WidgetPanelContentView(extensionID: extensionID, zoneID: zoneID)
+                .preferredColorScheme(.dark)
+        )
+        hosting.translatesAutoresizingMaskIntoConstraints = false
+        blur.addSubview(hosting)
+        NSLayoutConstraint.activate([
+            hosting.topAnchor.constraint(equalTo: blur.topAnchor),
+            hosting.bottomAnchor.constraint(equalTo: blur.bottomAnchor),
+            hosting.leadingAnchor.constraint(equalTo: blur.leadingAnchor),
+            hosting.trailingAnchor.constraint(equalTo: blur.trailingAnchor),
+        ])
+
+        let p = KeyablePanel(
+            contentRect: frame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        p.level = .floating
+        p.isMovable = false
+        p.hidesOnDeactivate = false
+        p.isReleasedWhenClosed = false
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        p.isOpaque = false
+        p.backgroundColor = .clear
+        p.contentView = blur
+
+        p.alphaValue = 0
+        p.makeKeyAndOrderFront(nil)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.2
+            p.animator().alphaValue = 1
+        }
+        widgetPanels[zoneID] = p
+    }
+
+    private func hideWidgetPanel(zoneID: String) {
+        guard let p = widgetPanels.removeValue(forKey: zoneID) else { return }
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.15
+            p.animator().alphaValue = 0
+        }, completionHandler: { p.orderOut(nil) })
+    }
+
+    private func hideAllWidgetPanels() {
+        widgetPanels.keys.forEach { hideWidgetPanel(zoneID: $0) }
+    }
+
+    private func reframeWidgetPanels() {
+        for (zoneID, p) in widgetPanels {
+            if let frame = WidgetZoneManager.shared.widgetPanelFrame(for: zoneID) {
+                p.setFrame(frame, display: true)
+            }
+        }
     }
 
     private func applyMinimalResize() {
@@ -426,6 +533,7 @@ final class PinManager: ObservableObject {
         } else {
             p.level = .normal
             p.collectionBehavior = []
+            widgetPanels.values.forEach { $0.level = .normal; $0.collectionBehavior = [] }
             sidebarPanel?.level = .normal
             sidebarPanel?.collectionBehavior = []
             rightSidebarPanel?.level = .normal

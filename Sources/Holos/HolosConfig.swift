@@ -47,9 +47,9 @@ final class HolosConfig: ObservableObject {
 
     private init() {
         let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/stacknode/holos")
+            .appendingPathComponent(".config/holos/configuration")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        fileURL = dir.appendingPathComponent("config.json")
+        fileURL = dir.appendingPathComponent("appearance.json")
 
         if let data = try? Data(contentsOf: fileURL),
            let stored = try? JSONDecoder().decode(Stored.self, from: data) {

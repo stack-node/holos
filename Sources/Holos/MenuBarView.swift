@@ -12,7 +12,6 @@ struct MenuBarView: View {
     @State private var inputText = ""
     @State private var edgePhase: CGFloat = 0
     @State private var isHoveringLeft   = false
-    @State private var isHoveringRight  = false
     @State private var showingLog       = false
     @State private var showingAppearance = false
     @State private var showingModels    = false
@@ -155,31 +154,7 @@ struct MenuBarView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Right strip: hover-only context picker
-            ZStack(alignment: .top) {
-                Color.clear
-                if isHoveringRight || pinManager.isRightSidebarOpen {
-                    VStack(spacing: 16) {
-                        ForEach(RightContext.allCases) { ctx in
-                            iconButton(ctx.icon, active: rightState.context == ctx) {
-                                rightState.context = ctx
-                                if !pinManager.isRightSidebarOpen { pinManager.toggleRightSidebar() }
-                            }
-                        }
-                    }
-                    .padding(.top, 52)
-                    .transition(.opacity.animation(.easeInOut(duration: 0.15)))
-                }
-            }
-            .frame(width: 36)
-            .frame(maxHeight: .infinity, alignment: .top)
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.15)) { isHoveringRight = hovering }
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
-
-            // Sidebar toggles — topmost layer, receive taps
+// Sidebar toggles — topmost layer, receive taps
             if !pinManager.isMinimal {
                 Button { pinManager.toggleSidebar() } label: {
                     Image(systemName: "sidebar.left")
@@ -354,11 +329,13 @@ struct MenuBarView: View {
     }
 
     private func globalPlaceholderPage(for tab: String) -> some View {
+        if tab == "Extensions" {
+            return AnyView(ExtensionListView().frame(maxWidth: .infinity, maxHeight: .infinity))
+        }
         let meta: (icon: String, color: Color) = {
             switch tab {
-            case "Extensions": return ("puzzlepiece.extension", Color(red: 0.55, green: 0.75, blue: 1.00))
-            case "Settings":   return ("gearshape.2",           Color(red: 0.70, green: 0.70, blue: 0.75))
-            default:           return ("square.dashed",         Color.white)
+            case "Settings": return ("gearshape.2", Color(red: 0.70, green: 0.70, blue: 0.75))
+            default:         return ("square.dashed", Color.white)
             }
         }()
         return AnyView(
@@ -1306,18 +1283,21 @@ struct SidebarContentView: View {
 
 enum RightContext: String, CaseIterable, Identifiable {
     case codeEditor
+    case textEditor
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
         case .codeEditor: return "curlybraces"
+        case .textEditor: return "text.alignleft"
         }
     }
 
     var label: String {
         switch self {
-        case .codeEditor: return "Editor"
+        case .codeEditor: return "Code Editor"
+        case .textEditor: return "Text Editor"
         }
     }
 }
@@ -1366,8 +1346,8 @@ struct RightSidebarContentView: View {
 
     @ViewBuilder private var content: some View {
         switch rightState.context {
-        case .codeEditor:
-            CodeEditorPane()
+        case .codeEditor: CodeEditorPane()
+        case .textEditor: TextEditorPane()
         }
     }
 }
@@ -1431,42 +1411,24 @@ final class ResizeHandleNSView: NSView {
 }
 
 private struct CodeEditorPane: View {
-    @ObservedObject private var model = CodeEditorModel.shared
+    @ObservedObject private var model      = CodeEditorModel.shared
     @ObservedObject private var rightState = RightSidebarState.shared
-    @State private var showingExplorer = false
+    @State private var showingExplorer     = false
 
     var body: some View {
         VStack(spacing: 0) {
             // Header row
             HStack(spacing: 0) {
                 if rightState.showEmbeddedExplorer {
-                    // Icon centered in the explorer-column header box
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 7)
-                            .fill(Color.white.opacity(0.08))
-                            .frame(width: 28, height: 28)
-                        Image(systemName: "curlybraces")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.7))
-                    }
-                    .frame(width: 180)
-                    .frame(maxHeight: .infinity)
-
+                    RightContextPickerButton()
+                        .frame(width: 180)
+                        .frame(maxHeight: .infinity)
                     Divider().opacity(0.12)
                 }
 
                 HStack(spacing: 8) {
-                    if !rightState.showEmbeddedExplorer {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 7)
-                                .fill(Color.white.opacity(0.08))
-                                .frame(width: 28, height: 28)
-                            Image(systemName: "curlybraces")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.7))
-                        }
-                    }
-                    Text("Editor")
+                    if !rightState.showEmbeddedExplorer { RightContextPickerButton() }
+                    Text(rightState.context.label)
                         .font(.system(.callout, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.8))
                     Spacer()
@@ -1535,5 +1497,98 @@ private struct CodeEditorPane: View {
 
             Toggle("Show Explorer", isOn: $rightState.showEmbeddedExplorer)
         }
+    }
+}
+
+// MARK: - Shared right pane context picker button
+
+private struct RightContextPickerButton: View {
+    @ObservedObject private var rightState = RightSidebarState.shared
+    @State private var showing = false
+
+    var body: some View {
+        Button { showing.toggle() } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(showing ? Color.white.opacity(0.12) : Color.white.opacity(0.08))
+                    .frame(width: 28, height: 28)
+                Image(systemName: rightState.context.icon)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+        }
+        .buttonStyle(.borderless)
+        .popover(isPresented: $showing, arrowEdge: .top) {
+            VStack(spacing: 0) {
+                ForEach(RightContext.allCases) { ctx in
+                    Button {
+                        rightState.context = ctx
+                        showing = false
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: ctx.icon)
+                                .font(.system(size: 12))
+                                .foregroundStyle(rightState.context == ctx
+                                    ? Color(red: 0.4, green: 0.85, blue: 1.0)
+                                    : .white.opacity(0.55))
+                                .frame(width: 16)
+                            Text(ctx.label)
+                                .font(.system(.callout))
+                                .foregroundStyle(rightState.context == ctx
+                                    ? .white.opacity(0.9)
+                                    : .white.opacity(0.55))
+                            Spacer()
+                            if rightState.context == ctx {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Color(red: 0.4, green: 0.85, blue: 1.0))
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(rightState.context == ctx ? Color.white.opacity(0.05) : Color.clear)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    if ctx != RightContext.allCases.last { Divider().opacity(0.12) }
+                }
+            }
+            .frame(minWidth: 160)
+            .preferredColorScheme(.dark)
+        }
+    }
+}
+
+// MARK: - Text editor pane
+
+private struct TextEditorPane: View {
+    @ObservedObject private var rightState = RightSidebarState.shared
+    @State private var text = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack(spacing: 8) {
+                RightContextPickerButton()
+                Text(rightState.context.label)
+                    .font(.system(.callout, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.8))
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+
+            Divider().opacity(0.12)
+
+            TextEditor(text: $text)
+                .font(.system(.body))
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
+                .foregroundStyle(.white.opacity(0.88))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(8)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .preferredColorScheme(.dark)
     }
 }

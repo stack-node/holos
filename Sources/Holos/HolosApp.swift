@@ -10,6 +10,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         setupStatusItem()
         LlamaServer.shared.start()
+        _ = ExtensionManager.shared
 
         LlamaServer.shared.$state
             .receive(on: RunLoop.main)

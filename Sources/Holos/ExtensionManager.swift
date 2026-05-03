@@ -1,0 +1,234 @@
+import Foundation
+
+// MARK: - Manifest
+
+struct ExtensionManifest: Codable, Identifiable {
+    let id: String
+    let name: String
+    let version: String
+    let description: String
+    let entry: String
+    let provides: [String]
+}
+
+// MARK: - Run state
+
+enum ExtensionRunState: Equatable {
+    case stopped, starting, running, failed(String)
+
+    var label: String {
+        switch self {
+        case .stopped:        return "Stopped"
+        case .starting:       return "Starting"
+        case .running:        return "Running"
+        case .failed(let e):  return "Failed: \(e)"
+        }
+    }
+}
+
+// MARK: - Extension instance
+
+@MainActor
+final class HolosExtension: ObservableObject, Identifiable {
+    let id: String
+    let manifest: ExtensionManifest
+    let directory: URL
+
+    @Published private(set) var runState: ExtensionRunState = .stopped
+    @Published private(set) var widgetData: [String: String] = [:]
+
+    private var process: Process?
+    private var stdinPipe: Pipe?
+    private var stdoutPipe: Pipe?
+
+    init(manifest: ExtensionManifest, directory: URL) {
+        self.id        = manifest.id
+        self.manifest  = manifest
+        self.directory = directory
+    }
+
+    var canStart: Bool {
+        switch runState { case .stopped, .failed: return true; default: return false }
+    }
+
+    func start() {
+        guard canStart else { return }
+        let entry = directory.appendingPathComponent(manifest.entry)
+        guard FileManager.default.fileExists(atPath: entry.path) else {
+            runState = .failed("entry not found"); return
+        }
+
+        runState = .starting
+
+        let proc   = Process()
+        let stdout = Pipe()
+        let stdin  = Pipe()
+
+        proc.executableURL       = URL(fileURLWithPath: "/usr/bin/env")
+        proc.arguments           = ["python3", entry.path]
+        proc.currentDirectoryURL = directory
+        proc.standardOutput      = stdout
+        proc.standardInput       = stdin
+        proc.standardError       = Pipe()
+
+        var env = ProcessInfo.processInfo.environment
+        let lib = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/holos/lib").path
+        env["PYTHONPATH"] = env["PYTHONPATH"].map { "\(lib):\($0)" } ?? lib
+        proc.environment = env
+
+        proc.terminationHandler = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if case .running = self.runState { self.runState = .stopped }
+                self.process = nil
+            }
+        }
+
+        stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            for line in text.components(separatedBy: "\n") {
+                let t = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !t.isEmpty,
+                      let d   = t.data(using: .utf8),
+                      let msg = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
+                else { continue }
+                Task { @MainActor [weak self] in self?.handle(message: msg) }
+            }
+        }
+
+        stdinPipe  = stdin
+        stdoutPipe = stdout
+        process    = proc
+
+        do {
+            try proc.run()
+            runState = .running
+        } catch {
+            runState = .failed(error.localizedDescription)
+        }
+    }
+
+    func stop() {
+        stdoutPipe?.fileHandleForReading.readabilityHandler = nil
+        process?.terminate()
+        process    = nil
+        stdinPipe  = nil
+        stdoutPipe = nil
+        runState   = .stopped
+    }
+
+    func restart() {
+        stop()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in self?.start() }
+    }
+
+    func sendCommand(_ action: String) {
+        guard let pipe = stdinPipe,
+              let data = try? JSONSerialization.data(withJSONObject: ["type": "command", "action": action]),
+              let line = String(data: data, encoding: .utf8)
+        else { return }
+        pipe.fileHandleForWriting.write((line + "\n").data(using: .utf8)!)
+    }
+
+    private func handle(message msg: [String: Any]) {
+        guard msg["type"] as? String == "widget_update",
+              let raw = msg["data"] as? [String: Any] else { return }
+        widgetData = raw.reduce(into: [:]) { $0[$1.key] = "\($1.value)" }
+    }
+}
+
+// MARK: - Extension manager
+
+@MainActor
+final class ExtensionManager: ObservableObject {
+    static let shared = ExtensionManager()
+    private init() { bootstrap(); scan() }
+
+    @Published private(set) var extensions: [HolosExtension] = []
+
+    private var extensionsDir: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/holos/extensions")
+            .resolvingSymlinksInPath()
+    }
+
+    func scan() {
+        let dir = extensionsDir
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let items = (try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.isDirectoryKey]
+        )) ?? []
+        extensions = items.compactMap { url in
+            guard let data     = try? Data(contentsOf: url.appendingPathComponent("manifest.json")),
+                  let manifest = try? JSONDecoder().decode(ExtensionManifest.self, from: data)
+            else { return nil }
+            return HolosExtension(manifest: manifest, directory: url)
+        }.sorted { $0.manifest.name < $1.manifest.name }
+    }
+
+    // MARK: Bootstrap
+
+    private func bootstrap() {
+        writeLib()
+    }
+
+    private func writeLib() {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/holos/lib/holos")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("__init__.py")
+        guard !FileManager.default.fileExists(atPath: url.path) else { return }
+        try? holosPyLib.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+}
+
+// MARK: - Embedded Python sources
+
+private let holosPyLib = #"""
+import sys
+import json
+import threading
+
+
+class Widget:
+    def __init__(self, widget_id):
+        self.widget_id = widget_id
+
+    def update(self, data: dict):
+        _send({"type": "widget_update", "widget_id": self.widget_id, "data": data})
+
+
+class Extension:
+    def __init__(self):
+        self._handlers = {}
+
+    def on_command(self, action):
+        def decorator(fn):
+            self._handlers[action] = fn
+            return fn
+        return decorator
+
+    def run(self):
+        def _listen():
+            for line in sys.stdin:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                    if msg.get("type") == "command":
+                        h = self._handlers.get(msg.get("action", ""))
+                        if h:
+                            h(msg)
+                except Exception:
+                    pass
+        threading.Thread(target=_listen, daemon=True).start()
+
+
+def _send(msg: dict):
+    print(json.dumps(msg), flush=True)
+"""#
+

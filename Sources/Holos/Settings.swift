@@ -3,33 +3,42 @@ import Foundation
 final class Settings: ObservableObject {
     static let shared = Settings()
 
-    @Published var serverBinaryPath: String {
-        didSet { UserDefaults.standard.set(serverBinaryPath, forKey: "serverBinaryPath") }
-    }
-    @Published var modelPath: String {
-        didSet { UserDefaults.standard.set(modelPath, forKey: "modelPath") }
-    }
-    @Published var port: Int {
-        didSet { UserDefaults.standard.set(port, forKey: "port") }
-    }
-    @Published var contextSize: Int {
-        didSet { UserDefaults.standard.set(contextSize, forKey: "contextSize") }
-    }
-    @Published var gpuLayers: Int {
-        didSet { UserDefaults.standard.set(gpuLayers, forKey: "gpuLayers") }
+    @Published var serverBinaryPath: String { didSet { save() } }
+    @Published var modelPath: String        { didSet { save() } }
+    @Published var port: Int                { didSet { save() } }
+    @Published var contextSize: Int         { didSet { save() } }
+    @Published var gpuLayers: Int           { didSet { save() } }
+
+    private let fileURL: URL
+
+    private struct Stored: Codable {
+        var serverBinaryPath: String
+        var modelPath: String
+        var port: Int
+        var contextSize: Int
+        var gpuLayers: Int
     }
 
     private init() {
-        let defaults = UserDefaults.standard
-        self.serverBinaryPath = defaults.string(forKey: "serverBinaryPath")
-            ?? Self.detectLlamaServer()
-        self.modelPath = defaults.string(forKey: "modelPath")
-            ?? (NSHomeDirectory() + "/.config/StackNode/Models/qwen2.5-coder-7b-instruct-q5_k_m.gguf")
-        self.port = defaults.integer(forKey: "port").nonZero ?? 8080
-        self.contextSize = defaults.integer(forKey: "contextSize").nonZero ?? 8192
-        self.gpuLayers = defaults.integer(forKey: "gpuLayers") == 0
-            ? (defaults.object(forKey: "gpuLayers") == nil ? 99 : 0)
-            : defaults.integer(forKey: "gpuLayers")
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/holos/configuration")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        fileURL = dir.appendingPathComponent("settings.json")
+
+        if let data = try? Data(contentsOf: fileURL),
+           let stored = try? JSONDecoder().decode(Stored.self, from: data) {
+            serverBinaryPath = stored.serverBinaryPath
+            modelPath        = stored.modelPath
+            port             = stored.port
+            contextSize      = stored.contextSize
+            gpuLayers        = stored.gpuLayers
+        } else {
+            serverBinaryPath = Self.detectLlamaServer()
+            modelPath        = NSHomeDirectory() + "/.config/holos/models/model.gguf"
+            port             = 8080
+            contextSize      = 8192
+            gpuLayers        = 99
+        }
     }
 
     private static func detectLlamaServer() -> String {
@@ -42,6 +51,17 @@ final class Settings: ObservableObject {
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? candidates[0]
     }
 
+    private func save() {
+        let stored = Stored(
+            serverBinaryPath: serverBinaryPath,
+            modelPath: modelPath,
+            port: port,
+            contextSize: contextSize,
+            gpuLayers: gpuLayers
+        )
+        try? JSONEncoder().encode(stored).write(to: fileURL)
+    }
+
     func buildArguments() -> [String] {
         [
             "--model", modelPath,
@@ -51,8 +71,4 @@ final class Settings: ObservableObject {
             "--flash-attn", "on",
         ]
     }
-}
-
-private extension Int {
-    var nonZero: Int? { self == 0 ? nil : self }
 }
