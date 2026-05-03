@@ -1092,49 +1092,98 @@ final class NavigationState: ObservableObject {
 
 // MARK: - Sidebar content
 
+private enum SidebarCategory: String, CaseIterable {
+    case ai    = "AI"
+    case music = "Music"
+
+    var icon: String {
+        switch self {
+        case .ai:    return "cpu"
+        case .music: return "music.note"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .ai:    return Color(red: 0.55, green: 0.40, blue: 0.90)
+        case .music: return Color(red: 0.95, green: 0.35, blue: 0.55)
+        }
+    }
+}
+
 struct SidebarContentView: View {
     @ObservedObject private var nav    = NavigationState.shared
     @ObservedObject private var server = LlamaServer.shared
+    @ObservedObject private var config = TalosConfig.shared
+    @State private var category: SidebarCategory = .ai
 
-    private let navItems: [(icon: String, label: String)] = [
-        ("bubble.left.fill",                    "Chats"),
-        ("cube",                                "Models"),
-        ("doc.text",                            "Prompts"),
-        ("wrench.and.screwdriver",              "Tools"),
-        ("cylinder.split.1x2",                  "Knowledge"),
-        ("point.3.connected.trianglepath.dotted","MCP Servers"),
-        ("gearshape",                           "Settings"),
+    private let aiNavItems: [(icon: String, label: String, color: Color)] = [
+        ("bubble.left.fill",                    "Chats",       Color(red: 0.40, green: 0.70, blue: 1.00)),
+        ("cube",                                "Models",      Color(red: 0.55, green: 0.40, blue: 0.90)),
+        ("doc.text",                            "Prompts",     Color(red: 0.35, green: 0.80, blue: 0.65)),
+        ("wrench.and.screwdriver",              "Tools",       Color(red: 1.00, green: 0.65, blue: 0.30)),
+        ("cylinder.split.1x2",                  "Knowledge",   Color(red: 0.90, green: 0.40, blue: 0.50)),
+        ("point.3.connected.trianglepath.dotted","MCP Servers", Color(red: 0.40, green: 0.85, blue: 0.85)),
+        ("gearshape",                           "Settings",    Color(red: 0.70, green: 0.70, blue: 0.75)),
     ]
 
-    private let bottomItems: [(icon: String, label: String)] = [
-        ("questionmark.circle", "Help"),
-        ("bubble.left",         "Feedback"),
+    private let bottomItems: [(icon: String, label: String, color: Color)] = [
+        ("questionmark.circle", "Help",     Color(red: 0.70, green: 0.70, blue: 0.75)),
+        ("bubble.left",         "Feedback", Color(red: 0.70, green: 0.70, blue: 0.75)),
     ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // App header
-            HStack(spacing: 8) {
-                Image(systemName: "play.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.7))
-                Text("Talos")
-                    .font(.system(.callout, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.8))
+            // Category tabs
+            HStack(spacing: 6) {
+                ForEach(SidebarCategory.allCases, id: \.self) { cat in
+                    Button { withAnimation(.easeInOut(duration: 0.18)) { category = cat } } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: cat.icon)
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(cat.rawValue)
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .foregroundStyle(category == cat ? cat.color : .white.opacity(0.35))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(category == cat ? cat.color.opacity(0.15) : Color.clear)
+                        )
+                    }
+                    .buttonStyle(.borderless)
+                }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 10)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
 
             Divider().opacity(0.12)
                 .padding(.bottom, 8)
 
-            // Nav items
-            ForEach(navItems, id: \.label) { item in
-                sidebarRow(icon: item.icon, label: item.label,
-                           isSelected: nav.selectedTab == item.label) {
-                    nav.selectedTab = item.label
+            // Nav items per category
+            if category == .ai {
+                ForEach(aiNavItems, id: \.label) { item in
+                    sidebarRow(icon: item.icon, label: item.label, color: item.color,
+                               isSelected: nav.selectedTab == item.label) {
+                        nav.selectedTab = item.label
+                    }
                 }
+            } else {
+                VStack(spacing: 12) {
+                    Image(systemName: "music.note.list")
+                        .font(.system(size: 28))
+                        .foregroundStyle(SidebarCategory.music.color.opacity(0.5))
+                    Text("Music")
+                        .font(.system(.callout, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.5))
+                    Text("Coming soon")
+                        .font(.system(.caption))
+                        .foregroundStyle(.white.opacity(0.25))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 40)
             }
 
             Spacer()
@@ -1144,7 +1193,7 @@ struct SidebarContentView: View {
 
             // Bottom items
             ForEach(bottomItems, id: \.label) { item in
-                sidebarRow(icon: item.icon, label: item.label, isSelected: false) {}
+                sidebarRow(icon: item.icon, label: item.label, color: item.color, isSelected: false) {}
             }
 
             // User row
@@ -1193,15 +1242,29 @@ struct SidebarContentView: View {
             .frame(height: 38)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(
+            Group {
+                if config.blurEnabled {
+                    Color.black.opacity(config.backgroundOpacity)
+                } else {
+                    Color(white: 0.08).opacity(0.95)
+                }
+            }
+            .ignoresSafeArea()
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.8)
+        )
         .preferredColorScheme(.dark)
     }
 
-    private func sidebarRow(icon: String, label: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+    private func sidebarRow(icon: String, label: String, color: Color, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: icon)
                     .font(.system(size: 13))
-                    .foregroundStyle(isSelected ? .white.opacity(0.9) : .white.opacity(0.45))
+                    .foregroundStyle(isSelected ? color : color.opacity(0.45))
                     .frame(width: 18)
                 Text(label)
                     .font(.system(.callout))
@@ -1246,18 +1309,41 @@ final class RightSidebarState: ObservableObject {
     static let shared = RightSidebarState()
     private init() {}
     @Published var context: RightContext = .codeEditor
+    @Published var showEmbeddedExplorer: Bool = false
+    @Published var autoReload: Bool = false {
+        didSet {
+            autoReload ? CodeEditorModel.shared.startWatching()
+                       : CodeEditorModel.shared.stopWatching()
+        }
+    }
 }
 
 // MARK: - Right sidebar
 
 struct RightSidebarContentView: View {
     @ObservedObject private var rightState = RightSidebarState.shared
+    @ObservedObject private var config     = TalosConfig.shared
 
     var body: some View {
         HStack(spacing: 0) {
-            SidebarResizeHandle()
             content
+            SidebarResizeHandle().frame(width: 6)
         }
+        .background(
+            Group {
+                if config.blurEnabled {
+                    Color.black.opacity(config.backgroundOpacity)
+                } else {
+                    Color(white: 0.08).opacity(0.95)
+                }
+            }
+            .ignoresSafeArea()
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.8)
+        )
+        .preferredColorScheme(.dark)
     }
 
     @ViewBuilder private var content: some View {
@@ -1268,46 +1354,91 @@ struct RightSidebarContentView: View {
     }
 }
 
-private struct SidebarResizeHandle: View {
-    @State private var dragBaseWidth: CGFloat = PinManager.shared.rightSidebarW
-    @State private var isHovering = false
+private struct SidebarResizeHandle: NSViewRepresentable {
+    func makeNSView(context: Context) -> ResizeHandleNSView { ResizeHandleNSView() }
+    func updateNSView(_ nsView: ResizeHandleNSView, context: Context) {}
+}
 
-    var body: some View {
-        Color.white.opacity(isHovering ? 0.08 : 0.0)
-            .frame(width: 4)
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                isHovering = hovering
-                if hovering { NSCursor.resizeLeftRight.push() }
-                else        { NSCursor.pop() }
-            }
-            .gesture(
-                DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                    .onChanged { value in
-                        let newWidth = dragBaseWidth - value.translation.width
-                        PinManager.shared.resizeRightSidebar(to: newWidth)
-                    }
-                    .onEnded { _ in
-                        dragBaseWidth = PinManager.shared.rightSidebarW
-                    }
-            )
+final class ResizeHandleNSView: NSView {
+    private var dragStartScreenX: CGFloat = 0
+    private var dragStartWidth: CGFloat = 0
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingArea.map { removeTrackingArea($0) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self, userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
     }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .resizeLeftRight)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        NSCursor.resizeLeftRight.push()
+        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.08).cgColor
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        NSCursor.pop()
+        layer?.backgroundColor = .clear
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let screenPoint = window?.convertToScreen(
+            NSRect(origin: event.locationInWindow, size: .zero)
+        ).origin else { return }
+        dragStartScreenX = screenPoint.x
+        dragStartWidth   = PinManager.shared.rightSidebarW
+        wantsLayer = true
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let screenPoint = window?.convertToScreen(
+            NSRect(origin: event.locationInWindow, size: .zero)
+        ).origin else { return }
+        let delta = screenPoint.x - dragStartScreenX
+        PinManager.shared.resizeRightSidebar(to: dragStartWidth + delta)
+    }
+
+    override func mouseUp(with event: NSEvent) {}
+
+    override var intrinsicContentSize: NSSize { NSSize(width: 6, height: NSView.noIntrinsicMetric) }
 }
 
 private struct CodeEditorPane: View {
-    @State private var code = ""
-    @State private var language: CodeLanguage = .swift
-    @State private var openFile: URL? = nil
+    @ObservedObject private var model = CodeEditorModel.shared
+    @ObservedObject private var rightState = RightSidebarState.shared
     @State private var showingExplorer = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            toolbar
-            Divider().opacity(0.12)
-            CodeEditorView(text: $code, language: language)
+        HStack(spacing: 0) {
+            if rightState.showEmbeddedExplorer {
+                embeddedExplorer
+                Divider().opacity(0.12)
+            }
+            VStack(spacing: 0) {
+                toolbar
+                Divider().opacity(0.12)
+                CodeEditorView(text: $model.code, language: model.language)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .preferredColorScheme(.dark)
+    }
+
+    private var embeddedExplorer: some View {
+        FileExplorerView(onSelect: { item in
+            model.open(item)
+        }, selectedURL: model.openFile)
+        .frame(width: 180)
+        .background(Color.white.opacity(0.02))
     }
 
     private var toolbar: some View {
@@ -1327,13 +1458,11 @@ private struct CodeEditorPane: View {
     }
 
     private var filePickerButton: some View {
-        Button {
-            showingExplorer.toggle()
-        } label: {
+        Button { showingExplorer.toggle() } label: {
             HStack(spacing: 4) {
                 Image(systemName: "folder")
                     .font(.system(size: 10, weight: .medium))
-                Text(openFile?.lastPathComponent ?? "Open…")
+                Text(model.openFile?.lastPathComponent ?? "Open…")
                     .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
             }
@@ -1345,15 +1474,27 @@ private struct CodeEditorPane: View {
         .buttonStyle(.borderless)
         .popover(isPresented: $showingExplorer, arrowEdge: .bottom) {
             FileExplorerView(onSelect: { item in
-                if let content = try? String(contentsOf: item.url, encoding: .utf8) {
-                    code = content
-                    language = item.detectedLanguage()
-                    openFile = item.url
-                    showingExplorer = false
-                }
-            }, selectedURL: openFile)
+                model.open(item)
+                showingExplorer = false
+            }, selectedURL: model.openFile)
             .frame(width: 260, height: 380)
             .preferredColorScheme(.dark)
+        }
+        .contextMenu {
+            Button("Save") { model.save() }
+                .disabled(model.openFile == nil)
+            Button("Save As…") { model.saveAs() }
+
+            Divider()
+
+            Button("Reload") { model.reload() }
+                .disabled(model.openFile == nil)
+            Toggle("Auto Reload", isOn: $rightState.autoReload)
+                .disabled(model.openFile == nil)
+
+            Divider()
+
+            Toggle("Show Explorer", isOn: $rightState.showEmbeddedExplorer)
         }
     }
 }

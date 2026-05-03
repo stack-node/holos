@@ -24,9 +24,13 @@ final class PinManager: ObservableObject {
     private var sidebarPanel: NSPanel?
     private var rightSidebarPanel: NSPanel?
     private var blurView: NSVisualEffectView?
+    private var sidebarBlurView: NSVisualEffectView?
+    private var rightSidebarBlurView: NSVisualEffectView?
     private var cancellables = Set<AnyCancellable>()
     private var resizeObserver: NSObjectProtocol?
+    private var moveObserver: NSObjectProtocol?
     private var rightResizeObserver: NSObjectProtocol?
+    private var rightMoveObserver: NSObjectProtocol?
 
     func toggle(near buttonRect: NSRect) {
         if isShowing && !isSticky {
@@ -176,15 +180,26 @@ final class PinManager: ObservableObject {
             sp.isOpaque = false
             sp.backgroundColor = .clear
 
+            let config = TalosConfig.shared
             let blur = NSVisualEffectView()
-            blur.material = .hudWindow
-            blur.blendingMode = .behindWindow
+            blur.material = config.blurMaterial
+            blur.blendingMode = config.blurEnabled ? .behindWindow : .withinWindow
             blur.state = .active
             blur.appearance = NSAppearance(named: .vibrantDark)
             blur.wantsLayer = true
             blur.layer?.cornerRadius = 12
             blur.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMinXMaxYCorner]
             blur.layer?.masksToBounds = true
+            sidebarBlurView = blur
+
+            config.$blurStrength
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.sidebarBlurView?.material = TalosConfig.shared.blurMaterial }
+                .store(in: &cancellables)
+            config.$blurEnabled
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] enabled in self?.sidebarBlurView?.blendingMode = enabled ? .behindWindow : .withinWindow }
+                .store(in: &cancellables)
 
             let hosting = NSHostingView(rootView: SidebarContentView())
             hosting.translatesAutoresizingMaskIntoConstraints = false
@@ -217,14 +232,16 @@ final class PinManager: ObservableObject {
             sp.animator().alphaValue = 1
         }
 
-        resizeObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.didResizeNotification, object: main, queue: .main
-        ) { [weak self] _ in
+        let reframeSidebar = { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, let main = self.panel, let sp = self.sidebarPanel else { return }
                 sp.setFrame(self.sidebarFrame(for: main.frame), display: true)
             }
         }
+        resizeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification, object: main, queue: .main) { _ in reframeSidebar() }
+        moveObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification, object: main, queue: .main) { _ in reframeSidebar() }
 
         isSidebarOpen = true
     }
@@ -237,6 +254,8 @@ final class PinManager: ObservableObject {
 
         resizeObserver.map { NotificationCenter.default.removeObserver($0) }
         resizeObserver = nil
+        moveObserver.map { NotificationCenter.default.removeObserver($0) }
+        moveObserver = nil
 
         let endFrame = NSRect(x: main.frame.minX - sidebarGap, y: sp.frame.minY,
                               width: sp.frame.width, height: sp.frame.height)
@@ -279,15 +298,26 @@ final class PinManager: ObservableObject {
             sp.isOpaque = false
             sp.backgroundColor = .clear
 
+            let config = TalosConfig.shared
             let blur = NSVisualEffectView()
-            blur.material = .hudWindow
-            blur.blendingMode = .behindWindow
+            blur.material = config.blurMaterial
+            blur.blendingMode = config.blurEnabled ? .behindWindow : .withinWindow
             blur.state = .active
             blur.appearance = NSAppearance(named: .vibrantDark)
             blur.wantsLayer = true
             blur.layer?.cornerRadius = 12
             blur.layer?.maskedCorners = [.layerMaxXMinYCorner, .layerMaxXMaxYCorner]
             blur.layer?.masksToBounds = true
+            rightSidebarBlurView = blur
+
+            config.$blurStrength
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.rightSidebarBlurView?.material = TalosConfig.shared.blurMaterial }
+                .store(in: &cancellables)
+            config.$blurEnabled
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] enabled in self?.rightSidebarBlurView?.blendingMode = enabled ? .behindWindow : .withinWindow }
+                .store(in: &cancellables)
 
             let hosting = NSHostingView(rootView: RightSidebarContentView())
             hosting.translatesAutoresizingMaskIntoConstraints = false
@@ -319,12 +349,9 @@ final class PinManager: ObservableObject {
             sp.animator().alphaValue = 1
         }
 
-        rightResizeObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.didResizeNotification, object: main, queue: .main
-        ) { [weak self] _ in
+        let reframeRight = { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, let main = self.panel, let sp = self.rightSidebarPanel else { return }
-                // Repin left edge to main window; preserve current width
                 sp.setFrame(NSRect(
                     x: main.frame.maxX + self.sidebarGap,
                     y: main.frame.minY + self.sidebarInset,
@@ -334,6 +361,10 @@ final class PinManager: ObservableObject {
                 self.rightSidebarW = sp.frame.width
             }
         }
+        rightResizeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification, object: main, queue: .main) { _ in reframeRight() }
+        rightMoveObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification, object: main, queue: .main) { _ in reframeRight() }
 
         isRightSidebarOpen = true
     }
@@ -346,6 +377,8 @@ final class PinManager: ObservableObject {
 
         rightResizeObserver.map { NotificationCenter.default.removeObserver($0) }
         rightResizeObserver = nil
+        rightMoveObserver.map { NotificationCenter.default.removeObserver($0) }
+        rightMoveObserver = nil
 
         let endFrame = NSRect(x: main.frame.maxX + rightSidebarW + sidebarGap, y: sp.frame.minY,
                               width: rightSidebarW, height: sp.frame.height)

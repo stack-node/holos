@@ -24,6 +24,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         button.image?.isTemplate = true
         button.action = #selector(handleClick)
         button.target = self
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
     }
 
     private func updateIcon(_ state: ServerState) {
@@ -41,8 +42,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func handleClick() {
         guard let button = statusItem?.button,
               let buttonWindow = button.window else { return }
+
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            showContextMenu()
+            return
+        }
+
         let rect = buttonWindow.convertToScreen(button.frame)
         Task { @MainActor in PinManager.shared.toggle(near: rect) }
+    }
+
+    private func showContextMenu() {
+        guard let button = statusItem?.button,
+              let event = NSApp.currentEvent else { return }
+        let menu = NSMenu()
+        let placeholder = NSMenuItem(title: "Talos", action: nil, keyEquivalent: "")
+        placeholder.isEnabled = false
+        menu.addItem(placeholder)
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Quit Talos", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        NSMenu.popUpContextMenu(menu, with: event, for: button)
     }
 }
 
