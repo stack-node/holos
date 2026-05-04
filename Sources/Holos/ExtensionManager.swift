@@ -39,7 +39,11 @@ final class HolosExtension: ObservableObject, Identifiable {
     let widgetSpec: ExtensionWidgetSpec?
 
     @Published private(set) var runState: ExtensionRunState = .stopped {
-        didSet { PinManager.shared.refreshWidgetPanels() }
+        didSet {
+            // Defer so we never re-enter `ExtensionManager.shared` during its static init
+            // (`scan` → `start` → `runState` → this path → `PinManager` → `ExtensionManager.shared`).
+            Task { @MainActor in PinManager.shared.refreshWidgetPanels() }
+        }
     }
     @Published private(set) var widgetData: [String: String] = [:]
 

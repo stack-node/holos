@@ -118,7 +118,40 @@ private enum SidebarNavPalette {
         (RightContext.codeEditor.rawValue, "curlybraces", "Code Editor", Color(red: 0.40, green: 0.72, blue: 1.00)),
         (RightContext.textEditor.rawValue, "text.alignleft", "Text Editor", Color(red: 0.50, green: 0.85, blue: 0.95)),
         (RightContext.terminal.rawValue, "terminal", "Terminal", Color(red: 0.38, green: 0.92, blue: 0.55)),
+        (RightContext.extensionBuilder.rawValue, "puzzlepiece.extension", "Extension Builder", Color(red: 0.55, green: 0.75, blue: 1.00)),
     ]
+
+    /// SF Symbol for **Modules** sub-feature rows (matches sidebar nav icons).
+    static func subModuleIcon(category: SidebarCategory, subModuleId: String) -> String {
+        switch category {
+        case .ai:
+            return aiNavItems.first { $0.label == subModuleId }?.icon ?? "square.grid.2x2"
+        case .development:
+            return utilitiesNavItems.first { $0.tabId == subModuleId }?.icon ?? "hammer.fill"
+        case .sound:
+            return soundNavItems.first { $0.tabId == subModuleId }?.icon ?? "speaker.wave.2.fill"
+        case .system:
+            return "gearshape"
+        }
+    }
+
+    /// Accent for **Modules** sub-feature rows (matches sidebar nav colors when available).
+    static func toggleAccent(category: SidebarCategory, subModuleId: String) -> Color {
+        switch category {
+        case .ai:
+            return aiNavItems.first { $0.label == subModuleId }?.color ?? SidebarCategory.ai.color
+        case .development:
+            return utilitiesNavItems.first { $0.tabId == subModuleId }?.color
+                ?? utilitiesNavItems.first { $0.title == subModuleId }?.color
+                ?? SidebarCategory.development.color
+        case .sound:
+            return soundNavItems.first { $0.tabId == subModuleId }?.color
+                ?? soundNavItems.first { $0.title == subModuleId }?.color
+                ?? SidebarCategory.sound.color
+        case .system:
+            return SidebarCategory.system.color
+        }
+    }
 
     /// Accent for the **bottom** of the main window’s left border (selected sidebar row / global item).
     static func pageAccentColor(nav: NavigationState) -> Color {
@@ -363,9 +396,10 @@ struct MenuBarView: View {
             if let id = sessionStore.selectedInstanceId,
                let inst = sessionStore.instance(for: id) {
                 switch inst.tool {
-                case .code(let m):      CodeEditorPane(model: m)
-                case .text(let m):      TextEditorPane(model: m)
-                case .terminal(let m):  TerminalPane(model: m)
+                case .code(let m):              CodeEditorPane(model: m)
+                case .text(let m):              TextEditorPane(model: m)
+                case .terminal(let m):          TerminalPane(model: m)
+                case .extensionBuilder(let m):  ExtensionBuilderPane(model: m)
                 }
             } else {
                 Color.clear
@@ -1050,7 +1084,7 @@ struct ModulesPageView: View {
                 Spacer(minLength: 0)
             }
         }
-        .toggleStyle(.switch)
+        .toggleStyle(HolosCompactToggleStyle(onTint: cat.color))
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.06)))
     }
@@ -1060,7 +1094,7 @@ struct ModulesPageView: View {
         case .ai:
             return "Chats, prompt refinement, and the local llama server stay off when disabled."
         case .development:
-            return "Code editor, text editor, and terminal sessions."
+            return "Code editor, text editor, terminal, and extension builder."
         case .system:
             return "System tools and status."
         case .sound:
@@ -1076,12 +1110,17 @@ struct ModulesPageView: View {
             let names = reqs.map { SubmoduleCatalog.title(for: category, id: $0) }.joined(separator: ", ")
             return "Requires \(names). Enabling turns those on; turning a required part off disables dependents (e.g. Chats needs Models)."
         }()
+        let accent = SidebarNavPalette.toggleAccent(category: category, subModuleId: id)
         return VStack(alignment: .leading, spacing: 4) {
             Toggle(isOn: Binding(
                 get: { modules.isSubEnabled(category, id) },
                 set: { modules.setSubEnabled(category, id, $0) }
             )) {
-                HStack(alignment: .top, spacing: 10) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: SidebarNavPalette.subModuleIcon(category: category, subModuleId: id))
+                        .font(.system(size: 16))
+                        .foregroundStyle(accent)
+                        .frame(width: 22, alignment: .center)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title)
                             .font(.system(.subheadline, weight: .semibold))
@@ -1096,7 +1135,7 @@ struct ModulesPageView: View {
                     Spacer(minLength: 0)
                 }
             }
-            .toggleStyle(.switch)
+            .toggleStyle(HolosCompactToggleStyle(onTint: accent))
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
@@ -1672,7 +1711,7 @@ struct SidebarContentView: View {
             LeftSidebarResizeHandle()
                 .frame(width: 6)
 
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
                 // Category tabs (horizontal scroll only — Cmd-drag to reorder, order persisted)
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -1729,11 +1768,10 @@ struct SidebarContentView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-
-                Divider().opacity(0.12)
-                    .padding(.bottom, 8)
+                .padding(.top, 10)
+                .padding(.bottom, 10)
+                .padding(.horizontal, 8)
+                .background(HolosIslandSurface())
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
@@ -1797,7 +1835,7 @@ struct SidebarContentView: View {
                                     Text("No utilities enabled")
                                         .font(.system(.callout, weight: .semibold))
                                         .foregroundStyle(.white.opacity(0.38))
-                                    Text("Turn on Code Editor, Text Editor, or Terminal under Modules ▸ Utilities.")
+                                    Text("Turn on Code Editor, Text Editor, Terminal, or Extension Builder under Modules ▸ Utilities.")
                                         .font(.caption)
                                         .foregroundStyle(.white.opacity(0.24))
                                         .multilineTextAlignment(.center)
@@ -1891,7 +1929,10 @@ struct SidebarContentView: View {
                         )
                         .frame(width: 0, height: 0)
                     }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .background(HolosIslandSurface())
                 }
                 .scrollIndicators(.hidden)
                 .overlay(alignment: .top) {
@@ -1906,10 +1947,8 @@ struct SidebarContentView: View {
                         .animation(.easeInOut(duration: 0.18), value: sidebarNavShowDownHint)
                         .allowsHitTesting(false)
                 }
+                .background(Color.clear)
                 .frame(minHeight: 0, maxHeight: .infinity)
-
-                Divider().opacity(0.12)
-                    .padding(.top, 8)
 
                 // Global items
                 VStack(spacing: 0) {
@@ -1920,40 +1959,37 @@ struct SidebarContentView: View {
                         }
                     }
                 }
-                .padding(.bottom, 10)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 8)
+                .background(HolosIslandSurface())
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .background(
             Group {
                 if config.blurEnabled {
-                    Color.black.opacity(config.backgroundOpacity)
+                    Color.black.opacity(config.backgroundOpacity * 0.42)
                 } else {
-                    Color(white: 0.08).opacity(0.95)
+                    Color(white: 0.08).opacity(0.55)
                 }
             }
             .ignoresSafeArea()
         )
-        .overlay(
-            // Square on the **trailing** edge (meets main window); only the outer (leading) corners match `PinManager` blur.
-            UnevenRoundedRectangle(
-                topLeadingRadius: 12,
-                bottomLeadingRadius: 12,
-                bottomTrailingRadius: 0,
-                topTrailingRadius: 0
+        .overlay(alignment: .trailing) {
+            LinearGradient(
+                colors: [
+                    Color.white.opacity(0.11),
+                    Color.white.opacity(0.05),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
             )
-            .strokeBorder(HolosPanelChrome.leftEdgeVerticalBorderGradient(nav: nav), lineWidth: HolosPanelChrome.borderLineWidth)
-            .mask(
-                HStack(spacing: 0) {
-                    Rectangle().fill(Color.white)
-                    Color.clear
-                        .frame(width: HolosPanelChrome.sidebarTrailingStrokeMaskWidth)
-                }
-            )
-            .animation(.easeInOut(duration: 0.18), value: nav.selectedSidebarCategory)
-            .animation(.easeInOut(duration: 0.18), value: nav.selectedTab)
-            .animation(.easeInOut(duration: 0.18), value: nav.globalTab)
-        )
+            .frame(width: 0.5)
+            .padding(.vertical, 14)
+            .allowsHitTesting(false)
+        }
         .preferredColorScheme(.dark)
     }
 
@@ -2228,6 +2264,7 @@ enum RightContext: String, CaseIterable, Identifiable, Hashable {
     case codeEditor
     case textEditor
     case terminal
+    case extensionBuilder
 
     var id: String { rawValue }
 
@@ -2236,6 +2273,7 @@ enum RightContext: String, CaseIterable, Identifiable, Hashable {
         case .codeEditor: return "curlybraces"
         case .textEditor: return "text.alignleft"
         case .terminal:   return "terminal"
+        case .extensionBuilder: return "puzzlepiece.extension"
         }
     }
 
@@ -2244,6 +2282,7 @@ enum RightContext: String, CaseIterable, Identifiable, Hashable {
         case .codeEditor: return "Code Editor"
         case .textEditor: return "Text Editor"
         case .terminal:   return "Terminal"
+        case .extensionBuilder: return "Extension Builder"
         }
     }
 }
@@ -2412,6 +2451,71 @@ final class LeftSidebarResizeHandleNSView: NSView {
     override func mouseUp(with event: NSEvent) {}
 
     override var intrinsicContentSize: NSSize { NSSize(width: 6, height: NSView.noIntrinsicMetric) }
+}
+
+private struct ExtensionBuilderPane: View {
+    @ObservedObject private var model: ExtensionBuilderSession
+    @ObservedObject private var extensionManager = ExtensionManager.shared
+
+    init(model: ExtensionBuilderSession) {
+        _model = ObservedObject(wrappedValue: model)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Picker("Extension", selection: Binding(
+                    get: { model.selectedExtensionID ?? "" },
+                    set: { newValue in
+                        let id = newValue.isEmpty ? nil : newValue
+                        model.applySelectedExtensionID(id)
+                    }
+                )) {
+                    Text("None").tag("")
+                    ForEach(extensionManager.extensions) { ext in
+                        Text(ext.manifest.name).tag(ext.id)
+                    }
+                }
+                .frame(minWidth: 200, maxWidth: 280, alignment: .leading)
+
+                Picker("Mode", selection: $model.editorMode) {
+                    Text("Visual").tag(ExtensionBuilderEditorMode.visual)
+                    Text("Code").tag(ExtensionBuilderEditorMode.code)
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 280)
+
+                Spacer(minLength: 0)
+
+                Button("Save") { model.save() }
+                    .disabled(model.selectedExtensionID == nil)
+                    .foregroundStyle(model.selectedExtensionID == nil ? .white.opacity(0.35) : .white.opacity(0.85))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+
+            Divider().opacity(0.12)
+
+            Group {
+                switch model.editorMode {
+                case .visual:
+                    VStack {
+                        Spacer(minLength: 0)
+                        Text("Scratch-style blocks — coming soon")
+                            .font(.system(.callout))
+                            .foregroundStyle(.white.opacity(0.35))
+                        Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .code:
+                    CodeEditorView(text: $model.entrySource, language: .python)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .preferredColorScheme(.dark)
+    }
 }
 
 private struct CodeEditorPane: View {

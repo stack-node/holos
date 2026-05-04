@@ -1,6 +1,20 @@
 import SwiftUI
 import AppKit
 
+// MARK: - Widget zone layout (host → widget; not set by extension code)
+
+private struct HolosWidgetZoneVerticalStackKey: EnvironmentKey {
+    /// `true` = left strip: each card is only as tall as its content. `false` = above/below: fill the fixed row height.
+    static let defaultValue: Bool = true
+}
+
+extension EnvironmentValues {
+    var holosWidgetZoneVerticalStack: Bool {
+        get { self[HolosWidgetZoneVerticalStackKey.self] }
+        set { self[HolosWidgetZoneVerticalStackKey.self] = newValue }
+    }
+}
+
 // MARK: - Window drag exclusion
 
 private final class _NonDraggableView: NSView {
@@ -263,6 +277,7 @@ struct ExtensionWidgetView: View {
 private struct DeclarativeExtensionWidget: View {
     @ObservedObject var ext: HolosExtension
     let spec: ExtensionWidgetSpec
+    @Environment(\.holosWidgetZoneVerticalStack) private var zoneVerticalStack
 
     var body: some View {
         Group {
@@ -275,15 +290,8 @@ private struct DeclarativeExtensionWidget: View {
             }
         }
         .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.5)
-                )
-        )
+        .frame(maxWidth: .infinity, maxHeight: zoneVerticalStack ? nil : .infinity, alignment: .leading)
+        .background(HolosWidgetIslandChrome(cornerRadius: 9))
         .padding(.horizontal, 8)
     }
 }
@@ -495,34 +503,50 @@ private struct GenericExtensionWidget: View {
                 .padding(.top, 2)
         }
         .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.5)
-                )
-        )
+        .background(HolosWidgetIslandChrome(cornerRadius: 9))
         .padding(.horizontal, 8)
     }
 }
 
 // MARK: - Widget panel content (rendered inside placed zone panel)
 
+/// No full-zone glass or tint — each extension widget draws its own card; the panel window stays transparent.
 struct WidgetPanelContentView: View {
     let zoneID: String
     @ObservedObject private var manager = ExtensionManager.shared
     @ObservedObject private var zoneMgr = WidgetZoneManager.shared
 
+    private var stacksVertically: Bool {
+        WidgetZoneManager.verticalStackZoneIDs.contains(zoneID)
+    }
+
+    /// Breathing room between extension cards at the zone edges.
+    private var outerPadding: CGFloat { stacksVertically ? 6 : 8 }
+    private var slotSpacing: CGFloat { stacksVertically ? 10 : 9 }
+
     var body: some View {
         Group {
-            if WidgetZoneManager.verticalStackZoneIDs.contains(zoneID) {
-                VStack(spacing: 4) { zoneSlots }
+            if stacksVertically {
+                VStack(spacing: slotSpacing) { zoneSlots }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else {
-                HStack(spacing: 4) { zoneSlots }
+                HStack(spacing: slotSpacing) { zoneSlots }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             }
         }
+        .padding(.horizontal, outerPadding)
+        .padding(.vertical, stacksVertically ? outerPadding + 1 : outerPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .environment(\.holosWidgetZoneVerticalStack, stacksVertically)
+        .environment(\.holosWidgetZoneChromePosition, chromePosition(for: zoneID))
+    }
+
+    private func chromePosition(for zoneID: String) -> HolosWidgetZoneChromePosition {
+        switch zoneID {
+        case "above-left-sidebar": return .aboveSidebarStrip
+        case "below-left-sidebar": return .belowSidebarStrip
+        default: return .besideSidebar
+        }
     }
 
     @ViewBuilder

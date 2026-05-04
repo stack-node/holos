@@ -545,27 +545,23 @@ final class PinManager: ObservableObject {
             return
         }
 
-        let config = HolosConfig.shared
-        let blur = MovableVisualEffectView()
-        blur.material = config.blurMaterial
-        blur.blendingMode = config.blurEnabled ? .behindWindow : .withinWindow
-        blur.state = .active
-        blur.appearance = NSAppearance(named: .vibrantDark)
-        blur.wantsLayer = true
-        blur.layer?.cornerRadius = 12
-        blur.layer?.masksToBounds = true
+        // Transparent root so each extension widget’s own card reads as a separate “island” (no shared frosted slab).
+        let root = NSView()
+        root.wantsLayer = true
+        root.layer?.backgroundColor = NSColor.clear.cgColor
 
         let hosting = NSHostingView(rootView:
             WidgetPanelContentView(zoneID: zoneID)
                 .preferredColorScheme(.dark)
         )
         hosting.translatesAutoresizingMaskIntoConstraints = false
-        blur.addSubview(hosting)
+
+        root.addSubview(hosting)
         NSLayoutConstraint.activate([
-            hosting.topAnchor.constraint(equalTo: blur.topAnchor),
-            hosting.bottomAnchor.constraint(equalTo: blur.bottomAnchor),
-            hosting.leadingAnchor.constraint(equalTo: blur.leadingAnchor),
-            hosting.trailingAnchor.constraint(equalTo: blur.trailingAnchor),
+            hosting.topAnchor.constraint(equalTo: root.topAnchor),
+            hosting.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            hosting.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            hosting.trailingAnchor.constraint(equalTo: root.trailingAnchor),
         ])
 
         let p = KeyablePanel(
@@ -581,7 +577,7 @@ final class PinManager: ObservableObject {
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         p.isOpaque = false
         p.backgroundColor = .clear
-        p.contentView = blur
+        p.contentView = root
 
         p.alphaValue = 0
         attachWidgetPanelToMain(p)

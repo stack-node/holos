@@ -76,9 +76,21 @@ final class ModuleRegistry: ObservableObject {
             .store(in: &cancellables)
 
         syncAIOnly()
+        bootstrapPersistenceIfNeeded()
         DispatchQueue.main.async {
             NavigationState.shared.sanitizeModuleNavigation()
             NavigationState.shared.sanitizeSubmoduleNavigation()
+        }
+    }
+
+    /// Writes defaults to disk the first time keys are missing so **first launch** is explicitly “all off”,
+    /// while upgrades that already have module flags still get submodule JSON saved once.
+    private func bootstrapPersistenceIfNeeded() {
+        if UserDefaults.standard.object(forKey: Self.defaultsKey) == nil {
+            persist()
+        }
+        if UserDefaults.standard.object(forKey: Self.subDefaultsKey) == nil {
+            persistSub()
         }
     }
 

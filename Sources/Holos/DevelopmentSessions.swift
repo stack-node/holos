@@ -30,6 +30,7 @@ private enum DevelopmentWorkspacePersistence {
             case code(CodeBody)
             case text(TextBody)
             case terminal(TerminalBody)
+            case extensionBuilder(ExtensionBuilderBody)
         }
 
         struct CodeBody: Codable {
@@ -45,6 +46,12 @@ private enum DevelopmentWorkspacePersistence {
 
         struct TerminalBody: Codable {
             var lines: [String]
+        }
+
+        struct ExtensionBuilderBody: Codable {
+            var selectedExtensionID: String?
+            var editorMode: String
+            var entrySource: String
         }
     }
 
@@ -135,12 +142,60 @@ final class TerminalSession: ObservableObject {
     }
 }
 
+// MARK: - Extension Builder session
+
+enum ExtensionBuilderEditorMode: String, CaseIterable {
+    case visual
+    case code
+}
+
+@MainActor
+final class ExtensionBuilderSession: ObservableObject {
+    @Published var selectedExtensionID: String?
+    @Published var editorMode: ExtensionBuilderEditorMode = .code
+    @Published var entrySource: String = ""
+
+    func applySelectedExtensionID(_ id: String?) {
+        selectedExtensionID = id
+        guard let id,
+              let ext = ExtensionManager.shared.extensions.first(where: { $0.id == id })
+        else {
+            entrySource = ""
+            return
+        }
+        let entryURL = ext.directory.appendingPathComponent(ext.manifest.entry)
+        guard FileManager.default.fileExists(atPath: entryURL.path),
+              let content = try? String(contentsOf: entryURL, encoding: .utf8)
+        else {
+            entrySource = ""
+            return
+        }
+        entrySource = content
+        DevelopmentSessionStore.shared.sessionLabelsDidChange()
+    }
+
+    func save() {
+        guard let id = selectedExtensionID,
+              let ext = ExtensionManager.shared.extensions.first(where: { $0.id == id })
+        else { return }
+        let url = ext.directory.appendingPathComponent(ext.manifest.entry)
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? entrySource.write(to: url, atomically: true, encoding: .utf8)
+        ExtensionManager.shared.scan()
+        DevelopmentSessionStore.shared.sessionLabelsDidChange()
+    }
+}
+
 // MARK: - Tool payload
 
 enum DevelopmentToolSession {
     case code(CodeEditorSession)
     case text(TextEditorSession)
     case terminal(TerminalSession)
+    case extensionBuilder(ExtensionBuilderSession)
 }
 
 struct DevelopmentInstance: Identifiable {
@@ -221,7 +276,40 @@ final class DevelopmentSessionStore: ObservableObject {
             )
         case .terminal:
             return "Shell \(idx)"
+        case .extensionBuilder(let m):
+            return Self.extensionBuilderSidebarTitle(
+                m: m,
+                peers: peers,
+                instanceId: instance.id
+            )
         }
+    }
+
+    private static func extensionBuilderSidebarTitle(
+        m: ExtensionBuilderSession,
+        peers: [DevelopmentInstance],
+        instanceId: UUID
+    ) -> String {
+        let builderPeers = peers.compactMap { inst -> (UUID, ExtensionBuilderSession)? in
+            if case .extensionBuilder(let s) = inst.tool { return (inst.id, s) }
+            return nil
+        }
+        guard let extID = m.selectedExtensionID,
+              let holosExt = ExtensionManager.shared.extensions.first(where: { $0.id == extID })
+        else {
+            let untitledPeers = builderPeers.filter { $0.1.selectedExtensionID == nil }
+            guard untitledPeers.count > 1 else { return "Untitled" }
+            let ord = (untitledPeers.firstIndex { $0.0 == instanceId } ?? 0) + 1
+            return "Untitled \(ord)"
+        }
+
+        let name = holosExt.manifest.name
+        let sameSelection = builderPeers.filter { $0.1.selectedExtensionID == extID }
+        if sameSelection.count > 1 {
+            let ord = (sameSelection.firstIndex { $0.0 == instanceId } ?? 0) + 1
+            return Self.truncateSidebarLabel("\(name) (\(ord))")
+        }
+        return Self.truncateSidebarLabel(name)
     }
 
     /// Call when a session’s displayed file name may change (open/save as); avoids refreshing the sidebar on every keystroke.
@@ -356,6 +444,8 @@ final class DevelopmentSessionStore: ObservableObject {
             tool = .text(TextEditorSession())
         case .terminal:
             tool = .terminal(TerminalSession())
+        case .extensionBuilder:
+            tool = .extensionBuilder(ExtensionBuilderSession())
         }
         instances.append(DevelopmentInstance(id: uid, context: context, tool: tool))
         registerPersistenceHooks(id: uid, tool: tool)
@@ -394,6 +484,10 @@ final class DevelopmentSessionStore: ObservableObject {
                 .receive(on: RunLoop.main)
                 .sink { [weak self] _ in self?.schedulePersist() }
         case .terminal(let m):
+            persistenceSubs[id] = m.objectWillChange
+                .receive(on: RunLoop.main)
+                .sink { [weak self] _ in self?.schedulePersist() }
+        case .extensionBuilder(let m):
             persistenceSubs[id] = m.objectWillChange
                 .receive(on: RunLoop.main)
                 .sink { [weak self] _ in self?.schedulePersist() }
@@ -449,6 +543,17 @@ final class DevelopmentSessionStore: ObservableObject {
                     context: inst.context.rawValue,
                     payload: .terminal(body)
                 ))
+            case .extensionBuilder(let m):
+                let body = DevelopmentWorkspacePersistence.InstanceSnapshot.ExtensionBuilderBody(
+                    selectedExtensionID: m.selectedExtensionID,
+                    editorMode: m.editorMode.rawValue,
+                    entrySource: m.entrySource
+                )
+                snaps.append(DevelopmentWorkspacePersistence.InstanceSnapshot(
+                    id: inst.id,
+                    context: inst.context.rawValue,
+                    payload: .extensionBuilder(body)
+                ))
             }
         }
 
@@ -491,6 +596,12 @@ final class DevelopmentSessionStore: ObservableObject {
                 let m = TerminalSession()
                 m.lines = body.lines.isEmpty ? terminalDefaultLines : body.lines
                 restored.append(DevelopmentInstance(id: snap.id, context: ctx, tool: .terminal(m)))
+            case .extensionBuilder(let body):
+                let m = ExtensionBuilderSession()
+                m.selectedExtensionID = body.selectedExtensionID
+                m.editorMode = ExtensionBuilderEditorMode(rawValue: body.editorMode) ?? .code
+                m.entrySource = body.entrySource
+                restored.append(DevelopmentInstance(id: snap.id, context: ctx, tool: .extensionBuilder(m)))
             }
         }
 
