@@ -16,14 +16,13 @@ enum TitleBarLayout {
 enum SidebarCategory: String, CaseIterable, Hashable {
     case ai             = "AI"
     case development    = "Utilities"
-    case versionControl = "Version Control"
     case system         = "System"
     case sound          = "Sound"
 
     private static let tabOrderDefaultsKey = "holos.sidebarCategoryTabOrder"
 
     private static var defaultTabOrder: [SidebarCategory] {
-        [.ai, .development, .versionControl, .system, .sound]
+        [.ai, .development, .system, .sound]
     }
 
     static func loadSavedTabOrder() -> [SidebarCategory] {
@@ -58,7 +57,6 @@ enum SidebarCategory: String, CaseIterable, Hashable {
         switch self {
         case .ai:             return "cpu"
         case .development:    return "hammer.fill"
-        case .versionControl: return "arrow.triangle.branch"
         case .system:         return "gearshape"
         case .sound:          return "speaker.wave.2.fill"
         }
@@ -68,7 +66,6 @@ enum SidebarCategory: String, CaseIterable, Hashable {
         switch self {
         case .ai:             return Color(red: 0.55, green: 0.40, blue: 0.90)
         case .development:    return Color(red: 0.40, green: 0.72, blue: 1.00)
-        case .versionControl: return Color(red: 0.95, green: 0.52, blue: 0.28)
         case .system:         return Color(red: 0.45, green: 0.88, blue: 0.58)
         case .sound:          return Color(red: 0.95, green: 0.35, blue: 0.55)
         }
@@ -128,7 +125,7 @@ private enum SidebarNavPalette {
             return aiNavItems.first { $0.label == nav.selectedTab }?.color ?? cat.color
         case .sound:
             return soundNavItems.first { $0.tabId == nav.selectedTab }?.color ?? cat.color
-        case .development, .versionControl, .system:
+        case .development, .system:
             return cat.color
         }
     }
@@ -214,8 +211,6 @@ struct MenuBarView: View {
     @State private var inputText = ""
     @State private var edgePhase: CGFloat = 0
     @State private var isHoveringLeft   = false
-    @State private var showingLog       = false
-    @State private var showingAppearance = false
     @ObservedObject private var rightState = RightSidebarState.shared
     var body: some View {
         mainPanel
@@ -287,29 +282,13 @@ struct MenuBarView: View {
             // Left strip: all hover-only controls
             ZStack(alignment: .top) {
                 Color.clear
-                if isHoveringLeft || showingLog || showingAppearance {
+                if isHoveringLeft {
                     VStack(spacing: 16) {
                         iconButton(pinManager.isPinned ? "pin.fill" : "pin",
                                    active: pinManager.isPinned) {
                             pinManager.isPinned.toggle()
                         }
                         iconButton("trash", active: false) { chat.clearHistory() }
-                        iconButton("terminal", active: showingLog) {
-                            showingLog.toggle(); showingAppearance = false
-                        }
-                        .popover(isPresented: $showingLog, arrowEdge: .leading) {
-                            LogView()
-                                .frame(width: 360, height: 300)
-                                .preferredColorScheme(.dark)
-                        }
-                        iconButton("paintbrush", active: showingAppearance) {
-                            showingAppearance.toggle(); showingLog = false
-                        }
-                        .popover(isPresented: $showingAppearance, arrowEdge: .leading) {
-                            AppearanceView()
-                                .frame(width: 280)
-                                .preferredColorScheme(.dark)
-                        }
                     }
                     .padding(.top, 52)
                     .transition(.opacity.animation(.easeInOut(duration: 0.15)))
@@ -549,6 +528,9 @@ struct MenuBarView: View {
     private func globalPlaceholderPage(for tab: String) -> some View {
         if tab == "Extensions" {
             return AnyView(ExtensionListView().frame(maxWidth: .infinity, maxHeight: .infinity))
+        }
+        if tab == "Settings" {
+            return AnyView(GlobalSettingsView().frame(maxWidth: .infinity, maxHeight: .infinity))
         }
         let meta: (icon: String, color: Color) = {
             switch tab {
@@ -852,7 +834,7 @@ struct PillTabStrip: View {
     }
 }
 
-// MARK: - Settings window
+// MARK: - AI settings (sidebar AI category, single gear — llama paths & server)
 
 struct SettingsView: View {
     @ObservedObject private var settings = Settings.shared
@@ -941,57 +923,13 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Server control popover
+// MARK: - Appearance & background (global Settings ▸ Appearance tab)
 
-struct ServerControlView: View {
-    @ObservedObject private var server = LlamaServer.shared
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 7, height: 7)
-                    .shadow(color: statusColor.opacity(0.9), radius: 4)
-                    .frame(width: 18)
-                Text(statusLabel)
-                    .font(.system(.callout, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.85))
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-        }
-        .frame(width: 160)
-        .padding(.bottom, 8)
-    }
-
-    private var statusColor: Color {
-        switch server.state {
-        case .stopped:  return .white.opacity(0.25)
-        case .starting: return .yellow
-        case .running:  return Color(red: 0.15, green: 1, blue: 0.45)
-        case .failed:   return .red
-        }
-    }
-
-    private var statusLabel: String {
-        switch server.state {
-        case .stopped:  return "Stopped"
-        case .starting: return "Starting…"
-        case .running:  return "Running"
-        case .failed:   return "Failed"
-        }
-    }
-
-}
-
-// MARK: - Appearance popover
-
-struct AppearanceView: View {
+private struct AppearanceSettingsContent: View {
     @ObservedObject private var config = HolosConfig.shared
 
     var body: some View {
-        ScrollView {
+        VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 appearanceSection("Background") {
                     HStack {
@@ -1048,7 +986,7 @@ struct AppearanceView: View {
                     }
                 }
             }
-            .padding(12)
+            .padding(.vertical, 4)
 
             Button("Reset to defaults") {
                 config.backgroundOpacity = 0.18
@@ -1065,8 +1003,8 @@ struct AppearanceView: View {
             .font(.system(.caption))
             .foregroundStyle(.white.opacity(0.35))
             .buttonStyle(.borderless)
-            .padding(.horizontal, 12)
-            .padding(.bottom, 12)
+            .padding(.top, 4)
+            .padding(.bottom, 4)
         }
     }
 
@@ -1116,6 +1054,103 @@ struct AppearanceView: View {
         }
         .padding(.bottom, 16)
     }
+}
+
+// MARK: - Global settings (sidebar bottom, double-gear; not AI llama settings)
+
+struct GlobalSettingsView: View {
+    @State private var selectedTab = "Appearance"
+
+    private let tabs = ["Appearance", "Logs"]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            PillTabStrip(tabs: tabs, selection: $selectedTab)
+                .padding(.horizontal, 46)
+                .padding(.top, TitleBarLayout.chromeTopInset)
+                .padding(.bottom, 10)
+
+            Group {
+                if selectedTab == "Appearance" {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            AppearanceSettingsContent()
+                        }
+                        .padding(12)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        globalSettingsSection("Logs") {
+                            LogView()
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func globalSettingsSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title)
+                .font(.system(.caption, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.45))
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
+            VStack(spacing: 0) {
+                content()
+            }
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.06)))
+        }
+        .padding(.bottom, 16)
+    }
+}
+
+// MARK: - Server control popover
+
+struct ServerControlView: View {
+    @ObservedObject private var server = LlamaServer.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 7, height: 7)
+                    .shadow(color: statusColor.opacity(0.9), radius: 4)
+                    .frame(width: 18)
+                Text(statusLabel)
+                    .font(.system(.callout, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+        }
+        .frame(width: 160)
+        .padding(.bottom, 8)
+    }
+
+    private var statusColor: Color {
+        switch server.state {
+        case .stopped:  return .white.opacity(0.25)
+        case .starting: return .yellow
+        case .running:  return Color(red: 0.15, green: 1, blue: 0.45)
+        case .failed:   return .red
+        }
+    }
+
+    private var statusLabel: String {
+        switch server.state {
+        case .stopped:  return "Stopped"
+        case .starting: return "Starting…"
+        case .running:  return "Running"
+        case .failed:   return "Failed"
+        }
+    }
+
 }
 
 // MARK: - Visual effect background

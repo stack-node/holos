@@ -288,6 +288,6 @@ class Extension:
 
 
 def _send(msg: dict):
-    print(json.dumps(msg), flush=True)
+    print(json.dumps(msg, ensure_ascii=False), flush=True)
 """#
 
