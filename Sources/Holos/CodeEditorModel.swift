@@ -3,9 +3,7 @@ import Combine
 import Darwin
 
 @MainActor
-final class CodeEditorModel: ObservableObject {
-    static let shared = CodeEditorModel()
-    private init() {}
+final class CodeEditorSession: ObservableObject {
 
     @Published var code: String = ""
     @Published var language: CodeLanguage = .swift

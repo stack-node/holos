@@ -104,6 +104,7 @@ struct ExtensionListView: View {
 
 struct ExtensionRow: View {
     @ObservedObject var ext: HolosExtension
+    @ObservedObject private var extensionManager = ExtensionManager.shared
     @State private var isDragging = false
 
     var body: some View {
@@ -138,6 +139,9 @@ struct ExtensionRow: View {
                 ctrlBtn("play.fill",         "Start",   enabled: ext.canStart)             { ext.start() }
                 ctrlBtn("stop.fill",          "Stop",    enabled: ext.runState == .running)  { ext.stop() }
                 ctrlBtn("arrow.clockwise",    "Restart", enabled: ext.runState == .running)  { ext.restart() }
+                autoStartBtn(on: extensionManager.isAutoStart(ext.id)) {
+                    extensionManager.setAutoStart(ext.id, !extensionManager.isAutoStart(ext.id))
+                }
             }
         }
         .padding(10)
@@ -200,6 +204,29 @@ struct ExtensionRow: View {
         }
         .buttonStyle(.borderless)
         .disabled(!enabled)
+    }
+
+    /// Toggle for launch-at-login behavior; green when enabled to match the running status accent.
+    private func autoStartBtn(on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 8, weight: .semibold))
+                Text("Auto-start")
+                    .font(.system(size: 9, weight: .medium))
+            }
+            .foregroundStyle(on ? .white.opacity(0.95) : .white.opacity(0.7))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(on
+                        ? Color(red: 0.15, green: 1, blue: 0.45).opacity(0.72)
+                        : Color.white.opacity(0.08))
+            )
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(on ? "Auto-start on" : "Auto-start off")
     }
 }
 
@@ -488,14 +515,23 @@ struct WidgetPanelContentView: View {
     @ObservedObject private var zoneMgr = WidgetZoneManager.shared
 
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(zoneMgr.assignments[zoneID] ?? [], id: \.self) { extID in
-                if let ext = manager.extensions.first(where: { $0.id == extID }) {
-                    ZoneSlotView(ext: ext, zoneID: zoneID)
-                }
+        Group {
+            if WidgetZoneManager.verticalStackZoneIDs.contains(zoneID) {
+                VStack(spacing: 4) { zoneSlots }
+            } else {
+                HStack(spacing: 4) { zoneSlots }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private var zoneSlots: some View {
+        ForEach(zoneMgr.assignments[zoneID] ?? [], id: \.self) { extID in
+            if let ext = manager.extensions.first(where: { $0.id == extID }) {
+                ZoneSlotView(ext: ext, zoneID: zoneID)
+            }
+        }
     }
 }
 
@@ -504,9 +540,13 @@ private struct ZoneSlotView: View {
     let zoneID: String
     @State private var isDragging = false
 
+    private var stacksVertically: Bool {
+        WidgetZoneManager.verticalStackZoneIDs.contains(zoneID)
+    }
+
     var body: some View {
         ExtensionWidgetView(ext: ext)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: stacksVertically ? nil : .infinity)
             .opacity(isDragging ? 0.4 : 1)
             .scaleEffect(isDragging ? 0.96 : 1)
             .animation(.easeInOut(duration: 0.15), value: isDragging)

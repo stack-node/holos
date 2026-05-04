@@ -179,14 +179,60 @@ final class HolosExtension: ObservableObject, Identifiable {
 @MainActor
 final class ExtensionManager: ObservableObject {
     static let shared = ExtensionManager()
-    private init() { bootstrap(); scan() }
+    private init() {
+        loadAutoStart()
+        bootstrap(); scan()
+    }
 
     @Published private(set) var extensions: [HolosExtension] = []
+    /// Extension IDs that should launch automatically when Holos starts (and after a rescan).
+    @Published private(set) var autoStartExtensionIDs: Set<String> = []
 
     private var extensionsDir: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/holos/extensions")
             .resolvingSymlinksInPath()
+    }
+
+    private var autoStartFileURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/holos/configuration/extension_autostart.json")
+    }
+
+    func isAutoStart(_ extensionID: String) -> Bool {
+        autoStartExtensionIDs.contains(extensionID)
+    }
+
+    func setAutoStart(_ extensionID: String, _ enabled: Bool) {
+        var next = autoStartExtensionIDs
+        if enabled { next.insert(extensionID) } else { next.remove(extensionID) }
+        autoStartExtensionIDs = next
+        saveAutoStart()
+        if enabled, let ext = extensions.first(where: { $0.id == extensionID }), ext.canStart {
+            ext.start()
+        }
+    }
+
+    private func loadAutoStart() {
+        guard let data = try? Data(contentsOf: autoStartFileURL),
+              let ids = try? JSONDecoder().decode([String].self, from: data)
+        else { return }
+        autoStartExtensionIDs = Set(ids)
+    }
+
+    private func saveAutoStart() {
+        try? FileManager.default.createDirectory(
+            at: autoStartFileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let sorted = autoStartExtensionIDs.sorted()
+        try? JSONEncoder().encode(sorted).write(to: autoStartFileURL)
+    }
+
+    private func startAutoStartExtensions() {
+        for ext in extensions where autoStartExtensionIDs.contains(ext.id) && ext.canStart {
+            ext.start()
+        }
     }
 
     func scan() {
@@ -201,6 +247,7 @@ final class ExtensionManager: ObservableObject {
             else { return nil }
             return HolosExtension(manifest: manifest, directory: url)
         }.sorted { $0.manifest.name < $1.manifest.name }
+        startAutoStartExtensions()
     }
 
     // MARK: Bootstrap

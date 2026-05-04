@@ -211,11 +211,12 @@ private struct MainWindowSplitChromeBorder: View {
 // MARK: - Main view
 
 struct MenuBarView: View {
-    @ObservedObject private var nav        = NavigationState.shared
-    @ObservedObject private var server     = LlamaServer.shared
-    @ObservedObject private var chat       = ChatClient.shared
-    @ObservedObject private var config     = HolosConfig.shared
-    @ObservedObject private var pinManager = PinManager.shared
+    @ObservedObject private var nav          = NavigationState.shared
+    @ObservedObject private var sessionStore = DevelopmentSessionStore.shared
+    @ObservedObject private var server       = LlamaServer.shared
+    @ObservedObject private var chat         = ChatClient.shared
+    @ObservedObject private var config       = HolosConfig.shared
+    @ObservedObject private var pinManager   = PinManager.shared
     @State private var inputText = ""
     @State private var edgePhase: CGFloat = 0
     @State private var isHoveringLeft   = false
@@ -273,14 +274,28 @@ struct MenuBarView: View {
 
     private var utilitiesMainPanel: some View {
         Group {
-            switch rightState.context {
-            case .codeEditor: CodeEditorPane()
-            case .textEditor: TextEditorPane()
-            case .terminal:   TerminalPane()
+            if let id = sessionStore.selectedInstanceId,
+               let inst = sessionStore.instance(for: id) {
+                switch inst.tool {
+                case .code(let m):      CodeEditorPane(model: m)
+                case .text(let m):      TextEditorPane(model: m)
+                case .terminal(let m):  TerminalPane(model: m)
+                }
+            } else {
+                Color.clear
             }
         }
         .padding(.top, TitleBarLayout.dragStripHeight)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            sessionStore.ensureSelectionForCurrentTab(category: nav.selectedSidebarCategory, tab: nav.selectedTab)
+        }
+        .onChange(of: nav.selectedSidebarCategory) { cat in
+            sessionStore.ensureSelectionForCurrentTab(category: cat, tab: nav.selectedTab)
+        }
+        .onChange(of: nav.selectedTab) { tab in
+            sessionStore.ensureSelectionForCurrentTab(category: nav.selectedSidebarCategory, tab: tab)
+        }
     }
 
     private var systemCategoryPlaceholderPage: some View {
@@ -1337,9 +1352,10 @@ private struct TabStripBoundsKey: PreferenceKey {
 }
 
 struct SidebarContentView: View {
-    @ObservedObject private var nav    = NavigationState.shared
-    @ObservedObject private var server = LlamaServer.shared
-    @ObservedObject private var config = HolosConfig.shared
+    @ObservedObject private var nav          = NavigationState.shared
+    @ObservedObject private var sessionStore = DevelopmentSessionStore.shared
+    @ObservedObject private var server       = LlamaServer.shared
+    @ObservedObject private var config       = HolosConfig.shared
     @State private var categoryOrder  = SidebarCategory.loadSavedTabOrder()
     @State private var tabStripBounds: [SidebarCategory: CGRect] = [:]
     @State private var tabCmdDragSourceIndex: Int?
@@ -1452,12 +1468,49 @@ struct SidebarContentView: View {
                             }
                         } else if nav.selectedSidebarCategory == .development {
                             ForEach(SidebarNavPalette.utilitiesNavItems, id: \.tabId) { item in
-                                sidebarRow(icon: item.icon, label: item.title, color: item.color,
-                                           isSelected: nav.globalTab == nil && nav.selectedTab == item.tabId) {
-                                    nav.globalTab = nil
-                                    nav.selectedTab = item.tabId
-                                    if let ctx = RightContext(rawValue: item.tabId) {
-                                        RightSidebarState.shared.context = ctx
+                                let context = RightContext(rawValue: item.tabId)!
+                                let subs = sessionStore.instances(for: context)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    utilityParentSidebarRow(
+                                        icon: item.icon,
+                                        label: item.title,
+                                        color: item.color,
+                                        isToolActive: nav.globalTab == nil && nav.selectedTab == item.tabId,
+                                        onSelect: {
+                                            nav.globalTab = nil
+                                            nav.selectedTab = item.tabId
+                                            RightSidebarState.shared.context = context
+                                            sessionStore.activateTool(context)
+                                        },
+                                        onNewSession: {
+                                            sessionStore.addSession(for: context)
+                                        }
+                                    ) {
+                                        Button("New session") {
+                                            sessionStore.addSession(for: context)
+                                        }
+                                    }
+
+                                    if !subs.isEmpty {
+                                        ForEach(subs) { inst in
+                                            sidebarRow(
+                                                icon: item.icon,
+                                                label: sessionStore.displayTitle(for: inst),
+                                                color: item.color,
+                                                isSelected: sessionStore.selectedInstanceId == inst.id,
+                                                indent: 14
+                                            ) {
+                                                nav.globalTab = nil
+                                                nav.selectedTab = inst.context.rawValue
+                                                RightSidebarState.shared.context = inst.context
+                                                sessionStore.selectInstance(inst.id)
+                                            }
+                                            .contextMenu {
+                                                Button("Close session", role: .destructive) {
+                                                    sessionStore.removeSession(inst.id)
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1717,20 +1770,80 @@ struct SidebarContentView: View {
         )
     }
 
-    private func sidebarRow(icon: String, label: String, color: Color, isSelected: Bool, action: @escaping () -> Void) -> some View {
+    private func utilityParentSidebarRow<MenuContent: View>(
+        icon: String,
+        label: String,
+        color: Color,
+        isToolActive: Bool,
+        onSelect: @escaping () -> Void,
+        onNewSession: @escaping () -> Void,
+        @ViewBuilder contextMenu: () -> MenuContent
+    ) -> some View {
+        HStack(alignment: .center, spacing: 4) {
+            Button(action: onSelect) {
+                HStack(spacing: 10) {
+                    Image(systemName: icon)
+                        .font(.system(size: 13))
+                        .foregroundStyle(isToolActive ? color : color.opacity(0.45))
+                        .frame(width: 18)
+                    Text(label)
+                        .font(.system(.callout))
+                        .fontWeight(isToolActive ? .semibold : .regular)
+                        .foregroundStyle(isToolActive ? .white.opacity(0.92) : .white.opacity(0.55))
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(isToolActive ? Color.white.opacity(0.06) : Color.clear)
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(action: onNewSession) {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(color.opacity(0.95))
+                    .frame(width: 28, height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.white.opacity(0.08))
+                    )
+            }
+            .buttonStyle(.borderless)
+            .help("New session")
+        }
+        .padding(.horizontal, 6)
+        .contextMenu { contextMenu() }
+    }
+
+    private func sidebarRow(
+        icon: String,
+        label: String,
+        color: Color,
+        isSelected: Bool,
+        indent: CGFloat = 0,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             HStack(spacing: 10) {
+                if indent > 0 {
+                    Spacer().frame(width: indent)
+                }
                 Image(systemName: icon)
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
                     .foregroundStyle(isSelected ? color : color.opacity(0.45))
                     .frame(width: 18)
                 Text(label)
-                    .font(.system(.callout))
+                    .font(.system(.subheadline))
                     .foregroundStyle(isSelected ? .white.opacity(0.9) : .white.opacity(0.55))
                 Spacer()
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 7)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(isSelected ? Color.white.opacity(0.08) : Color.clear)
@@ -1788,8 +1901,7 @@ final class RightSidebarState: ObservableObject {
     @Published var showEmbeddedExplorer: Bool = false
     @Published var autoReload: Bool = false {
         didSet {
-            autoReload ? CodeEditorModel.shared.startWatching()
-                       : CodeEditorModel.shared.stopWatching()
+            DevelopmentSessionStore.shared.applyAutoReloadSetting()
         }
     }
 }
@@ -1948,9 +2060,13 @@ final class LeftSidebarResizeHandleNSView: NSView {
 }
 
 private struct CodeEditorPane: View {
-    @ObservedObject private var model      = CodeEditorModel.shared
+    @ObservedObject private var model: CodeEditorSession
     @ObservedObject private var rightState = RightSidebarState.shared
     @State private var showingExplorer     = false
+
+    init(model: CodeEditorSession) {
+        _model = ObservedObject(wrappedValue: model)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2024,11 +2140,15 @@ private struct CodeEditorPane: View {
 // MARK: - Text editor pane
 
 private struct TextEditorPane: View {
-    @State private var text = ""
+    @ObservedObject private var model: TextEditorSession
+
+    init(model: TextEditorSession) {
+        _model = ObservedObject(wrappedValue: model)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            TextEditor(text: $text)
+            TextEditor(text: $model.text)
                 .font(.system(.body))
                 .scrollContentBackground(.hidden)
                 .background(Color.clear)
@@ -2044,12 +2164,11 @@ private struct TextEditorPane: View {
 // MARK: - Terminal pane
 
 private struct TerminalPane: View {
-    @State private var lines: [String] = [
-        "Holos terminal — no shell session yet.",
-        "Lines echo locally; type `clear` to reset the buffer.",
-        "",
-    ]
-    @State private var input = ""
+    @ObservedObject private var model: TerminalSession
+
+    init(model: TerminalSession) {
+        _model = ObservedObject(wrappedValue: model)
+    }
 
     private let termGreen = Color(red: 0.38, green: 0.92, blue: 0.48)
 
@@ -2058,7 +2177,7 @@ private struct TerminalPane: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 3) {
-                        ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                        ForEach(Array(model.lines.enumerated()), id: \.offset) { _, line in
                             Text(line)
                                 .font(.system(.caption, design: .monospaced))
                                 .foregroundStyle(termGreen.opacity(line.isEmpty ? 0.2 : 0.92))
@@ -2069,7 +2188,7 @@ private struct TerminalPane: View {
                     }
                     .padding(10)
                 }
-                .onChange(of: lines.count) { _ in
+                .onChange(of: model.lines.count) { _ in
                     withAnimation(.easeOut(duration: 0.15)) {
                         proxy.scrollTo("termBottom", anchor: .bottom)
                     }
@@ -2084,11 +2203,11 @@ private struct TerminalPane: View {
                 Text("%")
                     .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(termGreen.opacity(0.75))
-                TextField("", text: $input, axis: .horizontal)
+                TextField("", text: $model.input, axis: .horizontal)
                     .textFieldStyle(.plain)
                     .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(termGreen)
-                    .onSubmit(commitInput)
+                    .onSubmit { model.commitInput() }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
@@ -2096,21 +2215,5 @@ private struct TerminalPane: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .preferredColorScheme(.dark)
-    }
-
-    private func commitInput() {
-        let t = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        input = ""
-        guard !t.isEmpty else { return }
-        if t == "clear" {
-            lines = [
-                "Buffer cleared.",
-                "",
-            ]
-            return
-        }
-        lines.append("% \(t)")
-        lines.append(t)
-        lines.append("")
     }
 }

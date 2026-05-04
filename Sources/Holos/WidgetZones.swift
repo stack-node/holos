@@ -77,6 +77,47 @@ final class WidgetZoneManager: ObservableObject {
 
     static let zoneGap: CGFloat    = 5
     static let zoneHeight: CGFloat = 72
+    /// Narrow strip to the left of the left sidebar (matches zone height for balance).
+    static let zoneWidth: CGFloat  = 72
+
+    /// Zones anchored to the open left sidebar (same visibility rules in `PinManager`).
+    static let leftSidebarAdjacentZoneIDs: Set<String> = [
+        "left-of-left-sidebar",
+        "above-left-sidebar",
+        "below-left-sidebar",
+    ]
+
+    /// Multiple widgets in these zones use a vertical stack; other zones use a horizontal row.
+    static let verticalStackZoneIDs: Set<String> = ["left-of-left-sidebar"]
+
+    /// Drop targets / widget panels for zones tied to `stableSidebarFrame`.
+    static func sidebarAnchoredFrame(for zoneID: String, sidebarFrame sf: NSRect) -> NSRect? {
+        switch zoneID {
+        case "left-of-left-sidebar":
+            return NSRect(
+                x: sf.minX - Self.zoneGap - Self.zoneWidth,
+                y: sf.minY,
+                width: Self.zoneWidth,
+                height: sf.height
+            )
+        case "above-left-sidebar":
+            return NSRect(
+                x: sf.minX,
+                y: sf.maxY + Self.zoneGap,
+                width: sf.width,
+                height: Self.zoneHeight
+            )
+        case "below-left-sidebar":
+            return NSRect(
+                x: sf.minX,
+                y: sf.minY - Self.zoneGap - Self.zoneHeight,
+                width: sf.width,
+                height: Self.zoneHeight
+            )
+        default:
+            return nil
+        }
+    }
 
     // MARK: Persistence
 
@@ -108,17 +149,13 @@ final class WidgetZoneManager: ObservableObject {
         let pm = PinManager.shared
 
         if pm.isSidebarOpen, let sf = pm.stableSidebarFrame {
-            let id = "below-left-sidebar"
-            guard id != excludingZone else { return }
-            let frame = NSRect(
-                x: sf.minX,
-                y: sf.minY - Self.zoneGap - Self.zoneHeight,
-                width: sf.width,
-                height: Self.zoneHeight
-            )
-            let hl    = ZoneHighlightState()
-            let panel = makeDragPanel(frame: frame, highlight: hl)
-            dragEntries.append((id: id, frame: frame, panel: panel, highlight: hl))
+            for id in Self.leftSidebarAdjacentZoneIDs.sorted() {
+                guard id != excludingZone else { continue }
+                guard let frame = Self.sidebarAnchoredFrame(for: id, sidebarFrame: sf) else { continue }
+                let hl    = ZoneHighlightState()
+                let panel = makeDragPanel(frame: frame, highlight: hl)
+                dragEntries.append((id: id, frame: frame, panel: panel, highlight: hl))
+            }
         }
     }
 
@@ -162,17 +199,9 @@ final class WidgetZoneManager: ObservableObject {
     // MARK: Widget panel frame (for PinManager)
 
     func widgetPanelFrame(for zoneID: String) -> NSRect? {
-        switch zoneID {
-        case "below-left-sidebar":
-            guard let sf = PinManager.shared.stableSidebarFrame else { return nil }
-            return NSRect(
-                x: sf.minX,
-                y: sf.minY - Self.zoneGap - Self.zoneHeight,
-                width: sf.width,
-                height: Self.zoneHeight
-            )
-        default: return nil
-        }
+        guard Self.leftSidebarAdjacentZoneIDs.contains(zoneID),
+              let sf = PinManager.shared.stableSidebarFrame else { return nil }
+        return Self.sidebarAnchoredFrame(for: zoneID, sidebarFrame: sf)
     }
 
     // MARK: Helpers

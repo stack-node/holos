@@ -120,6 +120,26 @@ enum CodeLanguage {
     case swift, python, javascript, plainText
 
     var rules: [SyntaxRule] { SyntaxRule.rules(for: self) }
+
+    /// Stable string for persistence (`DevelopmentSessionStore`).
+    var persistenceKey: String {
+        switch self {
+        case .swift: return "swift"
+        case .python: return "python"
+        case .javascript: return "javascript"
+        case .plainText: return "plainText"
+        }
+    }
+
+    init?(persistenceKey: String) {
+        switch persistenceKey {
+        case "swift": self = .swift
+        case "python": self = .python
+        case "javascript": self = .javascript
+        case "plainText": self = .plainText
+        default: return nil
+        }
+    }
 }
 
 struct SyntaxRule {

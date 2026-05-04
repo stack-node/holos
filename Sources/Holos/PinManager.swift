@@ -15,6 +15,21 @@ final class PinManager: ObservableObject {
         if stored >= leftSidebarMinW && stored <= leftSidebarMaxW {
             sidebarW = stored
         }
+        auxiliaryKeyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            Task { @MainActor in
+                guard let self else { return }
+                guard let w = note.object as? NSWindow else { return }
+                if w === self.sidebarPanel || w === self.rightSidebarPanel
+                    || self.widgetPanels.values.contains(where: { $0 === w })
+                {
+                    self.enforceMainAboveAuxiliaryWindows()
+                }
+            }
+        }
     }
 
     @Published private(set) var isShowing = false
@@ -49,6 +64,19 @@ final class PinManager: ObservableObject {
     private var moveObserver: NSObjectProtocol?
     private var rightResizeObserver: NSObjectProtocol?
     private var rightMoveObserver: NSObjectProtocol?
+    private var auxiliaryKeyObserver: NSObjectProtocol?
+
+    /// Sidebars/widgets use keyable panels so text fields work; AppKit may promote them above the main panel. Keep the main window visually on top while preserving key focus on the auxiliary window.
+    private func enforceMainAboveAuxiliaryWindows() {
+        guard let main = panel, main.isVisible else { return }
+        var ordered: [NSWindow] = []
+        if let left = sidebarPanel, left.isVisible { ordered.append(left) }
+        if let right = rightSidebarPanel, right.isVisible { ordered.append(right) }
+        ordered.append(contentsOf: widgetPanels.values.filter(\.isVisible))
+        for w in ordered where w !== main {
+            main.order(.above, relativeTo: w.windowNumber)
+        }
+    }
 
     func toggle(near buttonRect: NSRect) {
         if isShowing && !isSticky {
@@ -62,11 +90,10 @@ final class PinManager: ObservableObject {
         // Reuse existing panel — preserves all SwiftUI @State (tabs, sidebar state, etc.)
         if let p = panel {
             p.makeKeyAndOrderFront(nil)
-            if isSidebarOpen      { sidebarPanel?.makeKeyAndOrderFront(nil) }
-            if isRightSidebarOpen { rightSidebarPanel?.makeKeyAndOrderFront(nil) }
             NSApp.activate(ignoringOtherApps: true)
             isShowing = true
             refreshWidgetPanels()
+            enforceMainAboveAuxiliaryWindows()
             return
         }
 
@@ -152,6 +179,7 @@ final class PinManager: ObservableObject {
         isShowing = true
         refreshWidgetPanels()
         applyPinState()
+        enforceMainAboveAuxiliaryWindows()
     }
 
     func hide() {
@@ -294,7 +322,10 @@ final class PinManager: ObservableObject {
             sp.animator().setFrame(target, display: true)
             sp.animator().alphaValue = 1
         }, completionHandler: { [weak self] in
-            self?.refreshWidgetPanels()
+            Task { @MainActor in
+                self?.refreshWidgetPanels()
+                self?.enforceMainAboveAuxiliaryWindows()
+            }
         })
 
         let reframeSidebar = { [weak self] in
@@ -412,12 +443,14 @@ final class PinManager: ObservableObject {
         // context switching uses a popover (menu-style pickers do not present reliably on this panel).
         main.addChildWindow(sp, ordered: .below)
 
-        NSAnimationContext.runAnimationGroup { ctx in
+        NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.25
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             sp.animator().setFrame(target, display: true)
             sp.animator().alphaValue = 1
-        }
+        }, completionHandler: { [weak self] in
+            Task { @MainActor in self?.enforceMainAboveAuxiliaryWindows() }
+        })
 
         let reframeRight = { [weak self] in
             MainActor.assumeIsolated {
@@ -482,9 +515,10 @@ final class PinManager: ObservableObject {
         let mgr = WidgetZoneManager.shared
         for (zoneID, extIDs) in mgr.assignments {
             let shouldShow: Bool
-            switch zoneID {
-            case "below-left-sidebar": shouldShow = isSidebarOpen && isShowing
-            default:                   shouldShow = isShowing
+            if WidgetZoneManager.leftSidebarAdjacentZoneIDs.contains(zoneID) {
+                shouldShow = isSidebarOpen && isShowing
+            } else {
+                shouldShow = isShowing
             }
             let anyReady = extIDs.contains { Self.extensionIsRunningForWidget(extensionID: $0) }
             if shouldShow && anyReady { showWidgetPanel(zoneID: zoneID) }
@@ -600,5 +634,6 @@ final class PinManager: ObservableObject {
             rightSidebarPanel?.level = .normal
             rightSidebarPanel?.collectionBehavior = []
         }
+        enforceMainAboveAuxiliaryWindows()
     }
 }
