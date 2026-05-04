@@ -48,6 +48,8 @@ Holos is designed to replace the need for a pile of small, single-purpose apps. 
 
 This project is evolving constantly.
 
+It’s also still heavily under construction. A lot of modules in the app are marked *Coming Soon*—and at the pace I’m shipping, that’s a promise I mean literally.
+
 - Features are being added **hour by hour**
 - Things may change, break, or improve rapidly  
 - Stable builds will be released as often as possible for those who can’t (or don’t want to) build from source

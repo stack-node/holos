@@ -1005,11 +1005,6 @@ struct ModulesPageView: View {
             Color.clear.frame(height: TitleBarLayout.dragStripHeight)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Turn on only what you want. Top-level modules default off. Expand a module to enable individual parts. Configuration screens (e.g. AI paths) are not sub-modules.")
-                        .font(.system(.callout))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .fixedSize(horizontal: false, vertical: true)
-
                     ForEach(SidebarCategory.allCases, id: \.self) { cat in
                         moduleToggleRow(cat)
                         if modules.isEnabled(cat) {
