@@ -12,6 +12,12 @@ final class MovableVisualEffectView: NSVisualEffectView {
 /// Full-width top strip — explicit drag because `isMovableByWindowBackground` / `mouseDownCanMoveWindow`
 /// do not reliably move `NSPanel` + borderless + SwiftUI (`nonactivatingPanel` makes this worse).
 private final class TitleBarDragNSView: NSView {
+    private enum Dots {
+        static let spacing: CGFloat = 5
+        static let diameter: CGFloat = 1.75
+        static let alpha: CGFloat = 0.11
+    }
+
     /// Keeps `MenuBarHostingView.hitTest` from dropping this view through to the blur (which would steal clicks).
     override var mouseDownCanMoveWindow: Bool { true }
     override var isOpaque: Bool { false }
@@ -32,6 +38,40 @@ private final class TitleBarDragNSView: NSView {
         let dx = now.x - dragMouseScreenStart.x
         let dy = now.y - dragMouseScreenStart.y
         win.setFrameOrigin(NSPoint(x: dragWindowFrameStart.origin.x + dx, y: dragWindowFrameStart.origin.y + dy))
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let b = bounds
+        guard b.width > 0.5, b.height > 0.5 else { return }
+
+        ctx.saveGState()
+        ctx.clip(to: dirtyRect)
+
+        let fill = NSColor.white.withAlphaComponent(Dots.alpha).cgColor
+        ctx.setFillColor(fill)
+
+        let s = Dots.spacing
+        let d = Dots.diameter
+        var row = 0
+        var y: CGFloat = s * 0.35
+        while y < b.height + d {
+            let stagger = (row % 2 == 0) ? CGFloat(0) : s * 0.5
+            var x = s * 0.35 + stagger
+            while x < b.width + d {
+                let dot = CGRect(x: x, y: y, width: d, height: d)
+                if dot.intersects(dirtyRect) {
+                    ctx.fillEllipse(in: dot)
+                }
+                x += s
+            }
+            y += s
+            row += 1
+        }
+
+        ctx.restoreGState()
     }
 
     override func updateTrackingAreas() {

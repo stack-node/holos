@@ -480,15 +480,15 @@ final class PinManager: ObservableObject {
 
     func refreshWidgetPanels() {
         let mgr = WidgetZoneManager.shared
-        for (zoneID, extID) in mgr.assignments {
+        for (zoneID, extIDs) in mgr.assignments {
             let shouldShow: Bool
             switch zoneID {
             case "below-left-sidebar": shouldShow = isSidebarOpen && isShowing
             default:                   shouldShow = isShowing
             }
-            let widgetReady = Self.extensionIsRunningForWidget(extensionID: extID)
-            if shouldShow && widgetReady { showWidgetPanel(zoneID: zoneID, extensionID: extID) }
-            else                          { hideWidgetPanel(zoneID: zoneID) }
+            let anyReady = extIDs.contains { Self.extensionIsRunningForWidget(extensionID: $0) }
+            if shouldShow && anyReady { showWidgetPanel(zoneID: zoneID) }
+            else                       { hideWidgetPanel(zoneID: zoneID) }
         }
         for zoneID in widgetPanels.keys where mgr.assignments[zoneID] == nil {
             hideWidgetPanel(zoneID: zoneID)
@@ -503,7 +503,7 @@ final class PinManager: ObservableObject {
         main.addChildWindow(w, ordered: .below)
     }
 
-    private func showWidgetPanel(zoneID: String, extensionID: String) {
+    private func showWidgetPanel(zoneID: String) {
         guard let frame = WidgetZoneManager.shared.widgetPanelFrame(for: zoneID) else { return }
         if let existing = widgetPanels[zoneID] {
             existing.setFrame(frame, display: true)
@@ -522,7 +522,7 @@ final class PinManager: ObservableObject {
         blur.layer?.masksToBounds = true
 
         let hosting = NSHostingView(rootView:
-            WidgetPanelContentView(extensionID: extensionID, zoneID: zoneID)
+            WidgetPanelContentView(zoneID: zoneID)
                 .preferredColorScheme(.dark)
         )
         hosting.translatesAutoresizingMaskIntoConstraints = false

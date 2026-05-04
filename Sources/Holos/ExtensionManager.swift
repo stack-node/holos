@@ -46,6 +46,7 @@ final class HolosExtension: ObservableObject, Identifiable {
     private var process: Process?
     private var stdinPipe: Pipe?
     private var stdoutPipe: Pipe?
+    private var audioCapture: AudioCapture?
 
     init(manifest: ExtensionManifest, directory: URL) {
         self.id         = manifest.id
@@ -121,10 +122,22 @@ final class HolosExtension: ObservableObject, Identifiable {
             runState = .running
         } catch {
             runState = .failed(error.localizedDescription)
+            return
+        }
+
+        if manifest.provides.contains("audio") {
+            let capture = AudioCapture(bands: 20)
+            capture.onBands = { [weak self] bands, rms in
+                self?.sendAudioBands(bands, rms: rms)
+            }
+            capture.start()
+            audioCapture = capture
         }
     }
 
     func stop() {
+        audioCapture?.stop()
+        audioCapture = nil
         stdoutPipe?.fileHandleForReading.readabilityHandler = nil
         process?.terminate()
         process    = nil
@@ -141,6 +154,14 @@ final class HolosExtension: ObservableObject, Identifiable {
     func sendCommand(_ action: String) {
         guard let pipe = stdinPipe,
               let data = try? JSONSerialization.data(withJSONObject: ["type": "command", "action": action]),
+              let line = String(data: data, encoding: .utf8)
+        else { return }
+        pipe.fileHandleForWriting.write((line + "\n").data(using: .utf8)!)
+    }
+
+    private func sendAudioBands(_ bands: [Double], rms: Double) {
+        guard let pipe = stdinPipe,
+              let data = try? JSONSerialization.data(withJSONObject: ["type": "audio_bands", "bands": bands, "rms": rms]),
               let line = String(data: data, encoding: .utf8)
         else { return }
         pipe.fileHandleForWriting.write((line + "\n").data(using: .utf8)!)
@@ -193,7 +214,7 @@ final class ExtensionManager: ObservableObject {
             .appendingPathComponent(".config/holos/lib/holos")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent("__init__.py")
-        guard !FileManager.default.fileExists(atPath: url.path) else { return }
+        // Always overwrite so extensions get the latest API on each launch.
         try? holosPyLib.write(to: url, atomically: true, encoding: .utf8)
     }
 
@@ -207,6 +228,15 @@ import json
 import threading
 
 
+class AudioBands:
+    """Spectrum frame delivered by the host at ~30 fps when audio capture is active."""
+    __slots__ = ("bands", "rms")
+
+    def __init__(self, bands: list, rms: float):
+        self.bands = bands  # list[float] in [0, 1], one value per frequency band
+        self.rms = rms      # overall loudness in [0, 1]
+
+
 class Widget:
     def __init__(self, widget_id):
         self.widget_id = widget_id
@@ -218,12 +248,22 @@ class Widget:
 class Extension:
     def __init__(self):
         self._handlers = {}
+        self._audio_handler = None
 
     def on_command(self, action):
         def decorator(fn):
             self._handlers[action] = fn
             return fn
         return decorator
+
+    def on_audio_bands(self, fn):
+        """Decorator — register callback for real-time audio spectrum data.
+
+        fn(audio: AudioBands) is called at ~30 fps while the host captures audio.
+        Requires "audio" in the extension manifest's ``provides`` list.
+        """
+        self._audio_handler = fn
+        return fn
 
     def run(self):
         def _listen():
@@ -233,10 +273,15 @@ class Extension:
                     continue
                 try:
                     msg = json.loads(line)
-                    if msg.get("type") == "command":
+                    t = msg.get("type")
+                    if t == "command":
                         h = self._handlers.get(msg.get("action", ""))
                         if h:
                             h(msg)
+                    elif t == "audio_bands":
+                        h = self._audio_handler
+                        if h:
+                            h(AudioBands(msg.get("bands", []), msg.get("rms", 0.0)))
                 except Exception:
                     pass
         threading.Thread(target=_listen, daemon=True).start()

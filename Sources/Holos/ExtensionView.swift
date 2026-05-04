@@ -39,7 +39,7 @@ struct ExtensionListView: View {
                 }
             }
             .padding(.horizontal, 46)
-            .padding(.top, 10)
+            .padding(.top, TitleBarLayout.chromeTopInset)
             .padding(.bottom, 10)
 
             Group {
@@ -483,40 +483,59 @@ private struct GenericExtensionWidget: View {
 // MARK: - Widget panel content (rendered inside placed zone panel)
 
 struct WidgetPanelContentView: View {
-    let extensionID: String
     let zoneID: String
     @ObservedObject private var manager = ExtensionManager.shared
+    @ObservedObject private var zoneMgr = WidgetZoneManager.shared
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(zoneMgr.assignments[zoneID] ?? [], id: \.self) { extID in
+                if let ext = manager.extensions.first(where: { $0.id == extID }) {
+                    ZoneSlotView(ext: ext, zoneID: zoneID)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct ZoneSlotView: View {
+    @ObservedObject var ext: HolosExtension
+    let zoneID: String
     @State private var isDragging = false
 
     var body: some View {
-        if let ext = manager.extensions.first(where: { $0.id == extensionID }) {
-            ExtensionWidgetView(ext: ext)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .opacity(isDragging ? 0.4 : 1)
-                .scaleEffect(isDragging ? 0.96 : 1)
-                .animation(.easeInOut(duration: 0.15), value: isDragging)
-                .gesture(
-                    DragGesture(minimumDistance: 5)
-                        .onChanged { _ in
-                            guard NSEvent.modifierFlags.contains(.command) else { return }
-                            if !isDragging {
-                                isDragging = true
-                                WidgetDragState.shared.startDrag(id: extensionID, fromZone: zoneID)
-                            }
-                            WidgetZoneManager.shared.updateHighlight(at: NSEvent.mouseLocation)
+        ExtensionWidgetView(ext: ext)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .opacity(isDragging ? 0.4 : 1)
+            .scaleEffect(isDragging ? 0.96 : 1)
+            .animation(.easeInOut(duration: 0.15), value: isDragging)
+            .contextMenu {
+                Button("Remove from zone") {
+                    WidgetZoneManager.shared.removeExtension(ext.id, fromZone: zoneID)
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 5)
+                    .onChanged { _ in
+                        guard NSEvent.modifierFlags.contains(.command) else { return }
+                        if !isDragging {
+                            isDragging = true
+                            WidgetDragState.shared.startDrag(id: ext.id, fromZone: zoneID)
                         }
-                        .onEnded { _ in
-                            if isDragging {
-                                _ = WidgetZoneManager.shared.commit(
-                                    extensionID: extensionID,
-                                    at: NSEvent.mouseLocation,
-                                    sourceZone: zoneID
-                                )
-                            }
-                            isDragging = false
-                            WidgetDragState.shared.endDrag()
+                        WidgetZoneManager.shared.updateHighlight(at: NSEvent.mouseLocation)
+                    }
+                    .onEnded { _ in
+                        if isDragging {
+                            _ = WidgetZoneManager.shared.commit(
+                                extensionID: ext.id,
+                                at: NSEvent.mouseLocation,
+                                sourceZone: zoneID
+                            )
                         }
-                )
-        }
+                        isDragging = false
+                        WidgetDragState.shared.endDrag()
+                    }
+            )
     }
 }

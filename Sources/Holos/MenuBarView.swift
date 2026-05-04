@@ -1,9 +1,215 @@
 import SwiftUI
 import AppKit
 
+/// Shared metrics for the dotted drag strip and top chrome (sidebar toggles, pill tabs).
+enum TitleBarLayout {
+    static let dragStripHeight: CGFloat = 40
+    /// Sidebar toggle hit targets are `28×28`; center that row vertically in `dragStripHeight`.
+    static let sidebarControlSide: CGFloat = 28
+    static var chromeTopInset: CGFloat {
+        max(0, (dragStripHeight - sidebarControlSide) / 2)
+    }
+}
+
+// MARK: - Sidebar category & palette (main window left border + sidebar lists)
+
+enum SidebarCategory: String, CaseIterable, Hashable {
+    case ai             = "AI"
+    case development    = "Development"
+    case versionControl = "Version Control"
+    case system         = "System"
+    case sound          = "Sound"
+
+    private static let tabOrderDefaultsKey = "holos.sidebarCategoryTabOrder"
+
+    private static var defaultTabOrder: [SidebarCategory] {
+        [.ai, .development, .versionControl, .system, .sound]
+    }
+
+    static func loadSavedTabOrder() -> [SidebarCategory] {
+        guard let raw = UserDefaults.standard.stringArray(forKey: tabOrderDefaultsKey),
+              !raw.isEmpty
+        else { return defaultTabOrder }
+        var seen = Set<String>()
+        var result: [SidebarCategory] = []
+        for s in raw {
+            let normalized = (s == "Music") ? SidebarCategory.sound.rawValue : s
+            guard let c = SidebarCategory(rawValue: normalized), seen.insert(c.rawValue).inserted else { continue }
+            result.append(c)
+        }
+        for c in SidebarCategory.allCases where !seen.contains(c.rawValue) {
+            result.append(c)
+        }
+        return result
+    }
+
+    static func saveTabOrder(_ order: [SidebarCategory]) {
+        UserDefaults.standard.set(order.map(\.rawValue), forKey: tabOrderDefaultsKey)
+    }
+
+    var icon: String {
+        switch self {
+        case .ai:             return "cpu"
+        case .development:    return "hammer.fill"
+        case .versionControl: return "arrow.triangle.branch"
+        case .system:         return "gearshape"
+        case .sound:          return "speaker.wave.2.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .ai:             return Color(red: 0.55, green: 0.40, blue: 0.90)
+        case .development:    return Color(red: 0.40, green: 0.72, blue: 1.00)
+        case .versionControl: return Color(red: 0.95, green: 0.52, blue: 0.28)
+        case .system:         return Color(red: 0.45, green: 0.88, blue: 0.58)
+        case .sound:          return Color(red: 0.95, green: 0.35, blue: 0.55)
+        }
+    }
+}
+
+private struct SoundSidebarNavItem: Identifiable {
+    var id: String { tabId }
+    let tabId: String
+    let icon: String
+    let title: String
+    let color: Color
+}
+
+private enum SidebarNavPalette {
+    static let aiNavItems: [(icon: String, label: String, color: Color)] = [
+        ("bubble.left.fill",                             "Chats",        Color(red: 0.40, green: 0.70, blue: 1.00)),
+        ("cube",                                         "Models",       Color(red: 0.55, green: 0.40, blue: 0.90)),
+        ("wrench.and.screwdriver",                       "Tools",        Color(red: 1.00, green: 0.65, blue: 0.30)),
+        ("cylinder.split.1x2",                           "Knowledge",    Color(red: 0.90, green: 0.40, blue: 0.50)),
+        ("point.3.connected.trianglepath.dotted",        "Connections",  Color(red: 0.40, green: 0.85, blue: 0.85)),
+        ("sparkles",                                     "Skills",       Color(red: 0.95, green: 0.80, blue: 0.35)),
+        ("list.bullet.rectangle",                        "Rules",        Color(red: 0.55, green: 0.85, blue: 0.55)),
+        ("point.3.filled.connected.trianglepath.dotted", "Map",          Color(red: 0.65, green: 0.50, blue: 0.95)),
+        ("gearshape",                                    "Settings",     Color(red: 0.70, green: 0.70, blue: 0.75)),
+    ]
+
+    static let globalItems: [(icon: String, label: String, color: Color)] = [
+        ("puzzlepiece.extension", "Extensions", Color(red: 0.55, green: 0.75, blue: 1.00)),
+        ("square.stack.3d.up.fill", "Modules", Color(red: 0.45, green: 0.82, blue: 0.92)),
+        ("gearshape.2",           "Settings",   Color(red: 0.70, green: 0.70, blue: 0.75)),
+    ]
+
+    static let soundNavItems: [SoundSidebarNavItem] = [
+        SoundSidebarNavItem(
+            tabId: "soundMap",
+            icon: "point.3.filled.connected.trianglepath.dotted",
+            title: "Map",
+            color: Color(red: 0.65, green: 0.50, blue: 0.95)
+        ),
+        SoundSidebarNavItem(
+            tabId: "soundMixer",
+            icon: "slider.horizontal.3",
+            title: "Mixer",
+            color: Color(red: 0.95, green: 0.42, blue: 0.52)
+        ),
+    ]
+
+    /// Accent for the **bottom** of the main window’s left border (selected sidebar row / global item).
+    static func pageAccentColor(nav: NavigationState) -> Color {
+        let cat = nav.selectedSidebarCategory
+        if let g = nav.globalTab {
+            return globalItems.first { $0.label == g }?.color ?? cat.color
+        }
+        switch cat {
+        case .ai:
+            return aiNavItems.first { $0.label == nav.selectedTab }?.color ?? cat.color
+        case .sound:
+            return soundNavItems.first { $0.tabId == nav.selectedTab }?.color ?? cat.color
+        case .development, .versionControl, .system:
+            return cat.color
+        }
+    }
+}
+
+/// Main panel border gradient and stroke width — used by the window outline and the title / drag strip divider.
+enum HolosPanelChrome {
+    static let borderLineWidth: CGFloat = 0.8
+
+    /// Leading stop of `borderGradient` — left edge of the main panel (purple).
+    static let mainWindowGradientLeadingColor = Color(red: 0.55, green: 0.25, blue: 0.95).opacity(0.7)
+    /// Trailing stop of `borderGradient` — right edge of the main panel (cyan).
+    static let mainWindowGradientTrailingColor = Color(red: 0.2, green: 0.85, blue: 1.0).opacity(0.6)
+
+    static var borderGradient: LinearGradient {
+        LinearGradient(
+            stops: [
+                .init(color: mainWindowGradientLeadingColor, location: 0),
+                .init(color: Color(red: 0.9, green: 0.3, blue: 0.6).opacity(0.5), location: 0.25),
+                .init(color: Color(red: 0.5, green: 0.3, blue: 0.75).opacity(0.15), location: 0.5),
+                .init(color: Color(red: 0.1, green: 0.7, blue: 0.7).opacity(0.5), location: 0.75),
+                .init(color: mainWindowGradientTrailingColor, location: 1),
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+    }
+
+    /// Leading strip width for the contextual left border (corner radius + stroke).
+    static let mainWindowLeftBorderBandWidth: CGFloat = 22
+    /// Standard gradient stroke starts here so it overlaps the left band slightly (no seam).
+    static let mainWindowStandardBorderLeadingInset: CGFloat = 18
+
+    /// Matches sidebar category (top) → selected page / global item (bottom); main window left band + left sidebar outline.
+    static let leftEdgeVerticalBorderAccentOpacity: CGFloat = 0.88
+
+    static func leftEdgeVerticalBorderGradient(nav: NavigationState) -> LinearGradient {
+        LinearGradient(
+            colors: [
+                nav.selectedSidebarCategory.color.opacity(Self.leftEdgeVerticalBorderAccentOpacity),
+                SidebarNavPalette.pageAccentColor(nav: nav).opacity(Self.leftEdgeVerticalBorderAccentOpacity),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+}
+
+// MARK: - Main window split chrome border (left edge contextual, rest unchanged)
+
+private struct MainWindowSplitChromeBorder: View {
+    @ObservedObject var nav: NavigationState
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(HolosPanelChrome.borderGradient, lineWidth: HolosPanelChrome.borderLineWidth)
+                .mask(
+                    HStack(spacing: 0) {
+                        Color.clear
+                            .frame(width: HolosPanelChrome.mainWindowStandardBorderLeadingInset)
+                        Rectangle()
+                            .fill(Color.white)
+                    }
+                )
+
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(HolosPanelChrome.leftEdgeVerticalBorderGradient(nav: nav), lineWidth: HolosPanelChrome.borderLineWidth)
+                .mask(
+                    HStack(spacing: 0) {
+                        Rectangle()
+                            .fill(Color.white)
+                            .frame(width: HolosPanelChrome.mainWindowLeftBorderBandWidth)
+                        Spacer(minLength: 0)
+                    }
+                )
+        }
+        .allowsHitTesting(false)
+        .animation(.easeInOut(duration: 0.18), value: nav.selectedSidebarCategory)
+        .animation(.easeInOut(duration: 0.18), value: nav.selectedTab)
+        .animation(.easeInOut(duration: 0.18), value: nav.globalTab)
+    }
+}
+
 // MARK: - Main view
 
 struct MenuBarView: View {
+    @ObservedObject private var nav        = NavigationState.shared
     @ObservedObject private var server     = LlamaServer.shared
     @ObservedObject private var chat       = ChatClient.shared
     @ObservedObject private var config     = HolosConfig.shared
@@ -29,23 +235,7 @@ struct MenuBarView: View {
             }
             .ignoresSafeArea()
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(
-                    LinearGradient(
-                        stops: [
-                            .init(color: Color(red: 0.55, green: 0.25, blue: 0.95).opacity(0.7), location: 0),
-                            .init(color: Color(red: 0.9,  green: 0.3,  blue: 0.6 ).opacity(0.5), location: 0.25),
-                            .init(color: Color(red: 0.5,  green: 0.3,  blue: 0.75).opacity(0.15), location: 0.5),
-                            .init(color: Color(red: 0.1,  green: 0.7,  blue: 0.7 ).opacity(0.5), location: 0.75),
-                            .init(color: Color(red: 0.2,  green: 0.85, blue: 1.0 ).opacity(0.6), location: 1),
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
-                    lineWidth: 0.8
-                )
-        )
+        .overlay(MainWindowSplitChromeBorder(nav: nav))
         .preferredColorScheme(.dark)
         .onAppear {
             withAnimation(.easeInOut(duration: 4).repeatForever(autoreverses: true)) {
@@ -56,21 +246,39 @@ struct MenuBarView: View {
 
     // MARK: Main panel
 
-    @ObservedObject private var nav = NavigationState.shared
-
     private var mainPanel: some View {
         ZStack {
+            // Dotted drag strip (back) — must be *below* SwiftUI content so tabs/buttons stay clickable.
+            WindowTitleBarDragArea()
+                .frame(height: TitleBarLayout.dragStripHeight)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .zIndex(0)
+
+            // Bottom edge of drag zone — same gradient + weight as the panel border.
+            Rectangle()
+                .fill(HolosPanelChrome.borderGradient)
+                .frame(height: HolosPanelChrome.borderLineWidth)
+                .frame(maxWidth: .infinity)
+                .padding(.top, TitleBarLayout.dragStripHeight - HolosPanelChrome.borderLineWidth)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(false)
+                .zIndex(0.25)
+
             // Content
             VStack(spacing: 0) {
                 if let g = nav.globalTab {
                     globalPlaceholderPage(for: g)
                 } else if nav.selectedTab == "Chats" {
-                    messagesArea
-                    inputSection
+                    VStack(spacing: 0) {
+                        messagesArea
+                        inputSection
+                    }
+                    .padding(.top, TitleBarLayout.dragStripHeight)
                 } else {
                     placeholderPage(for: nav.selectedTab)
                 }
             }
+            .zIndex(1)
 
             // Left strip: all hover-only controls
             ZStack(alignment: .top) {
@@ -110,11 +318,7 @@ struct MenuBarView: View {
                 withAnimation(.easeInOut(duration: 0.15)) { isHoveringLeft = hovering }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-
-            // AppKit-backed strip: reliable window drag (placed under sidebar buttons; center passes through Spacer).
-            WindowTitleBarDragArea()
-                .frame(height: 40)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .zIndex(2)
 
 // Sidebar toggles — topmost layer, receive taps
             HStack(alignment: .top) {
@@ -125,7 +329,7 @@ struct MenuBarView: View {
                         .frame(width: 28, height: 28)
                         .background(
                             RoundedRectangle(cornerRadius: 7)
-                                .fill(pinManager.isSidebarOpen ? Color.white.opacity(0.12) : Color.clear)
+                                .fill(pinManager.isSidebarOpen ? HolosTitleChrome.plateActive : HolosTitleChrome.plate)
                         )
                 }
                 .buttonStyle(.borderless)
@@ -140,14 +344,15 @@ struct MenuBarView: View {
                         .frame(width: 28, height: 28)
                         .background(
                             RoundedRectangle(cornerRadius: 7)
-                                .fill(pinManager.isRightSidebarOpen ? Color.white.opacity(0.12) : Color.clear)
+                                .fill(pinManager.isRightSidebarOpen ? HolosTitleChrome.plateActive : HolosTitleChrome.plate)
                         )
                 }
                 .buttonStyle(.borderless)
                 .padding(.trailing, 10)
             }
-            .padding(.top, 10)
+            .padding(.top, TitleBarLayout.chromeTopInset)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .zIndex(3)
         }
     }
 
@@ -568,6 +773,15 @@ struct GlassMessageBubble: View {
     }
 }
 
+// MARK: - Title chrome (opaque plates mask dotted drag strip)
+
+/// Solid fills so `WindowTitleBarDragArea` dots don’t show through translucent capsules.
+private enum HolosTitleChrome {
+    static let plate = Color(red: 0.07, green: 0.075, blue: 0.09)
+    static let plateActive = Color(red: 0.12, green: 0.12, blue: 0.145)
+    static let tabSelected = Color(red: 0.13, green: 0.13, blue: 0.155)
+}
+
 // MARK: - Pill tab strip (Settings, Extensions, …)
 
 struct PillTabStrip: View {
@@ -587,7 +801,7 @@ struct PillTabStrip: View {
                         .padding(.vertical, 5)
                         .background(
                             Capsule()
-                                .fill(selection == tab ? Color.white.opacity(0.1) : Color.clear)
+                                .fill(selection == tab ? HolosTitleChrome.tabSelected : Color.clear)
                         )
                 }
                 .buttonStyle(.borderless)
@@ -609,7 +823,7 @@ struct SettingsView: View {
             // Tab bar — same vertical inset as sidebar.left / sidebar.right (mainPanel)
             PillTabStrip(tabs: tabs, selection: $selectedTab)
                 .padding(.horizontal, 46)
-                .padding(.top, 10)
+                .padding(.top, TitleBarLayout.chromeTopInset)
                 .padding(.bottom, 10)
 
             ScrollView {
@@ -941,64 +1155,11 @@ final class NavigationState: ObservableObject {
     private init() {}
     @Published var selectedTab: String = "Chats"
     @Published var globalTab: String? = nil
+    /// Drives the **top** of the main window’s left border (same as sidebar category tabs).
+    @Published var selectedSidebarCategory: SidebarCategory = .ai
 }
 
 // MARK: - Sidebar content
-
-private enum SidebarCategory: String, CaseIterable, Hashable {
-    case ai             = "AI"
-    case development    = "Development"
-    case versionControl = "Version Control"
-    case system         = "System"
-    case sound          = "Sound"
-
-    private static let tabOrderDefaultsKey = "holos.sidebarCategoryTabOrder"
-
-    private static var defaultTabOrder: [SidebarCategory] {
-        [.ai, .development, .versionControl, .system, .sound]
-    }
-
-    static func loadSavedTabOrder() -> [SidebarCategory] {
-        guard let raw = UserDefaults.standard.stringArray(forKey: tabOrderDefaultsKey),
-              !raw.isEmpty
-        else { return defaultTabOrder }
-        var seen = Set<String>()
-        var result: [SidebarCategory] = []
-        for s in raw {
-            let normalized = (s == "Music") ? SidebarCategory.sound.rawValue : s
-            guard let c = SidebarCategory(rawValue: normalized), seen.insert(c.rawValue).inserted else { continue }
-            result.append(c)
-        }
-        for c in SidebarCategory.allCases where !seen.contains(c.rawValue) {
-            result.append(c)
-        }
-        return result
-    }
-
-    static func saveTabOrder(_ order: [SidebarCategory]) {
-        UserDefaults.standard.set(order.map(\.rawValue), forKey: tabOrderDefaultsKey)
-    }
-
-    var icon: String {
-        switch self {
-        case .ai:             return "cpu"
-        case .development:    return "hammer.fill"
-        case .versionControl: return "arrow.triangle.branch"
-        case .system:         return "gearshape"
-        case .sound:          return "speaker.wave.2.fill"
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .ai:             return Color(red: 0.55, green: 0.40, blue: 0.90)
-        case .development:    return Color(red: 0.40, green: 0.72, blue: 1.00)
-        case .versionControl: return Color(red: 0.95, green: 0.52, blue: 0.28)
-        case .system:         return Color(red: 0.45, green: 0.88, blue: 0.58)
-        case .sound:          return Color(red: 0.95, green: 0.35, blue: 0.55)
-        }
-    }
-}
 
 private enum TabStripCoordinateSpace {
     static let name = "holos.tabStrip"
@@ -1011,24 +1172,16 @@ private struct TabStripBoundsKey: PreferenceKey {
     }
 }
 
-private struct SoundSidebarNavItem: Identifiable {
-    var id: String { tabId }
-    let tabId: String
-    let icon: String
-    let title: String
-    let color: Color
-}
-
 struct SidebarContentView: View {
     @ObservedObject private var nav    = NavigationState.shared
     @ObservedObject private var server = LlamaServer.shared
     @ObservedObject private var config = HolosConfig.shared
-    @State private var category: SidebarCategory = .ai
     @State private var categoryOrder  = SidebarCategory.loadSavedTabOrder()
     @State private var tabStripBounds: [SidebarCategory: CGRect] = [:]
     @State private var tabCmdDragSourceIndex: Int?
     @State private var tabCmdDragCategory: SidebarCategory?
-    @State private var tabCmdDragTranslation: CGFloat = 0
+    /// Vector from dragged tab’s top-leading corner to gesture start, in `TabStripCoordinateSpace` (fixed for the drag).
+    @State private var tabCmdDragGrabFromTabOrigin: CGSize = .zero
     @State private var tabCmdProposedDropIndex: Int?
     @State private var lastDragLocationInStrip: CGPoint?
     @State private var edgeScrollDir: Int = 0
@@ -1038,39 +1191,6 @@ struct SidebarContentView: View {
     @State private var sidebarNavMaxClipOffsetY: CGFloat = 0
 
     private let tabStripEdgeScrollTimer = Timer.publish(every: 0.11, on: .main, in: .common).autoconnect()
-
-    private let aiNavItems: [(icon: String, label: String, color: Color)] = [
-        ("bubble.left.fill",                            "Chats",       Color(red: 0.40, green: 0.70, blue: 1.00)),
-        ("cube",                                        "Models",      Color(red: 0.55, green: 0.40, blue: 0.90)),
-        ("wrench.and.screwdriver",                      "Tools",       Color(red: 1.00, green: 0.65, blue: 0.30)),
-        ("cylinder.split.1x2",                          "Knowledge",   Color(red: 0.90, green: 0.40, blue: 0.50)),
-        ("point.3.connected.trianglepath.dotted",       "Connections", Color(red: 0.40, green: 0.85, blue: 0.85)),
-        ("sparkles",                                    "Skills",      Color(red: 0.95, green: 0.80, blue: 0.35)),
-        ("list.bullet.rectangle",                       "Rules",       Color(red: 0.55, green: 0.85, blue: 0.55)),
-        ("point.3.filled.connected.trianglepath.dotted","Map",         Color(red: 0.65, green: 0.50, blue: 0.95)),
-        ("gearshape",                                   "Settings",    Color(red: 0.70, green: 0.70, blue: 0.75)),
-    ]
-
-    private let globalItems: [(icon: String, label: String, color: Color)] = [
-        ("puzzlepiece.extension", "Extensions", Color(red: 0.55, green: 0.75, blue: 1.00)),
-        ("square.stack.3d.up.fill", "Modules", Color(red: 0.45, green: 0.82, blue: 0.92)),
-        ("gearshape.2",           "Settings",   Color(red: 0.70, green: 0.70, blue: 0.75)),
-    ]
-
-    private let soundNavItems: [SoundSidebarNavItem] = [
-        SoundSidebarNavItem(
-            tabId: "soundMap",
-            icon: "point.3.filled.connected.trianglepath.dotted",
-            title: "Map",
-            color: Color(red: 0.65, green: 0.50, blue: 0.95)
-        ),
-        SoundSidebarNavItem(
-            tabId: "soundMixer",
-            icon: "slider.horizontal.3",
-            title: "Mixer",
-            color: Color(red: 0.95, green: 0.42, blue: 0.52)
-        ),
-    ]
 
     private let sidebarNavScrollEdgeEpsilon: CGFloat = 4
 
@@ -1095,11 +1215,23 @@ struct SidebarContentView: View {
                 // Category tabs (horizontal scroll only — Cmd-drag to reorder, order persisted)
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 4) {
-                            ForEach(categoryTabsForStrip, id: \.self) { cat in
-                                let modelIndex = categoryOrder.firstIndex(of: cat) ?? 0
-                                sidebarCategoryTab(cat: cat, modelIndex: modelIndex)
-                                    .id(cat)
+                        ZStack(alignment: .topLeading) {
+                            HStack(spacing: 4) {
+                                ForEach(categoryTabsForStrip, id: \.self) { cat in
+                                    let modelIndex = categoryOrder.firstIndex(of: cat) ?? 0
+                                    sidebarCategoryTab(cat: cat, modelIndex: modelIndex)
+                                        .id(cat)
+                                }
+                            }
+                            if let dragCat = tabCmdDragCategory,
+                               let p = lastDragLocationInStrip {
+                                categoryTabLabel(cat: dragCat)
+                                    .opacity(0.55)
+                                    .allowsHitTesting(false)
+                                    .transaction { $0.animation = nil }
+                                    .offset(x: p.x - tabCmdDragGrabFromTabOrigin.width,
+                                            y: p.y - tabCmdDragGrabFromTabOrigin.height)
+                                    .zIndex(100)
                             }
                         }
                         .padding(.horizontal, 10)
@@ -1138,16 +1270,16 @@ struct SidebarContentView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         // Nav items per category
-                        if category == .ai {
-                            ForEach(aiNavItems, id: \.label) { item in
+                        if nav.selectedSidebarCategory == .ai {
+                            ForEach(SidebarNavPalette.aiNavItems, id: \.label) { item in
                                 sidebarRow(icon: item.icon, label: item.label, color: item.color,
                                            isSelected: nav.globalTab == nil && nav.selectedTab == item.label) {
                                     nav.globalTab = nil
                                     nav.selectedTab = item.label
                                 }
                             }
-                        } else if category == .sound {
-                            ForEach(soundNavItems) { item in
+                        } else if nav.selectedSidebarCategory == .sound {
+                            ForEach(SidebarNavPalette.soundNavItems) { item in
                                 sidebarRow(icon: item.icon, label: item.title, color: item.color,
                                            isSelected: nav.globalTab == nil && nav.selectedTab == item.tabId) {
                                     nav.globalTab = nil
@@ -1156,10 +1288,10 @@ struct SidebarContentView: View {
                             }
                         } else {
                             VStack(spacing: 12) {
-                                Image(systemName: category.icon)
+                                Image(systemName: nav.selectedSidebarCategory.icon)
                                     .font(.system(size: 28))
-                                    .foregroundStyle(category.color.opacity(0.5))
-                                Text(category.rawValue)
+                                    .foregroundStyle(nav.selectedSidebarCategory.color.opacity(0.5))
+                                Text(nav.selectedSidebarCategory.rawValue)
                                     .font(.system(.callout, weight: .medium))
                                     .foregroundStyle(.white.opacity(0.5))
                                 Text("Coming soon")
@@ -1198,7 +1330,7 @@ struct SidebarContentView: View {
 
                 // Global items
                 VStack(spacing: 0) {
-                    ForEach(globalItems, id: \.label) { item in
+                    ForEach(SidebarNavPalette.globalItems, id: \.label) { item in
                         sidebarRow(icon: item.icon, label: item.label, color: item.color,
                                    isSelected: nav.globalTab == item.label) {
                             nav.globalTab = item.label
@@ -1220,8 +1352,17 @@ struct SidebarContentView: View {
             .ignoresSafeArea()
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.8)
+            // Square on the **trailing** edge (meets main window); only the outer (leading) corners match `PinManager` blur.
+            UnevenRoundedRectangle(
+                topLeadingRadius: 12,
+                bottomLeadingRadius: 12,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 0
+            )
+            .strokeBorder(HolosPanelChrome.leftEdgeVerticalBorderGradient(nav: nav), lineWidth: HolosPanelChrome.borderLineWidth)
+            .animation(.easeInOut(duration: 0.18), value: nav.selectedSidebarCategory)
+            .animation(.easeInOut(duration: 0.18), value: nav.selectedTab)
+            .animation(.easeInOut(duration: 0.18), value: nav.globalTab)
         )
         .preferredColorScheme(.dark)
     }
@@ -1309,9 +1450,9 @@ struct SidebarContentView: View {
         }
     }
 
-    private func sidebarCategoryTab(cat: SidebarCategory, modelIndex: Int) -> some View {
-        let isDraggingThis = tabCmdDragCategory == cat
-        return VStack(spacing: 3) {
+    @ViewBuilder
+    private func categoryTabLabel(cat: SidebarCategory) -> some View {
+        VStack(spacing: 3) {
             Image(systemName: cat.icon)
                 .font(.system(size: 12, weight: .semibold))
             Text(cat.rawValue)
@@ -1321,17 +1462,23 @@ struct SidebarContentView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 72)
         }
-        .foregroundStyle(category == cat ? cat.color : .white.opacity(0.35))
+        .foregroundStyle(nav.selectedSidebarCategory == cat ? cat.color : .white.opacity(0.35))
         .padding(.horizontal, 6)
         .padding(.vertical, 7)
         .background(
             RoundedRectangle(cornerRadius: 7)
-                .fill(category == cat ? cat.color.opacity(0.15) : Color.clear)
+                .fill(nav.selectedSidebarCategory == cat ? cat.color.opacity(0.15) : Color.clear)
                 .overlay(
                     RoundedRectangle(cornerRadius: 7)
-                        .strokeBorder(category == cat ? cat.color : Color.clear, lineWidth: 0.75)
+                        .strokeBorder(nav.selectedSidebarCategory == cat ? cat.color : Color.clear, lineWidth: 0.75)
                 )
         )
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func sidebarCategoryTab(cat: SidebarCategory, modelIndex: Int) -> some View {
+        let isDraggingThis = tabCmdDragCategory == cat
+        return categoryTabLabel(cat: cat)
         .background(
             GeometryReader { geo in
                 Color.clear.preference(
@@ -1340,13 +1487,11 @@ struct SidebarContentView: View {
                 )
             }
         )
-        .fixedSize(horizontal: true, vertical: false)
-        .zIndex(isDraggingThis ? 2 : 0)
-        .offset(x: isDraggingThis ? tabCmdDragTranslation : 0)
-        .opacity(isDraggingThis ? 0.55 : 1)
+        .zIndex(0)
+        .opacity(isDraggingThis ? 0 : 1)
         .contentShape(Rectangle())
         .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.18)) { category = cat }
+            withAnimation(.easeInOut(duration: 0.18)) { nav.selectedSidebarCategory = cat }
         }
         .simultaneousGesture(
             DragGesture(minimumDistance: 6, coordinateSpace: .named(TabStripCoordinateSpace.name))
@@ -1357,9 +1502,13 @@ struct SidebarContentView: View {
                         tabCmdDragCategory = cat
                         tabCmdProposedDropIndex = modelIndex
                         scrollAssistIndex = categoryTabsForStrip.firstIndex(of: cat) ?? modelIndex
+                        let b = tabStripBounds[cat]
+                        tabCmdDragGrabFromTabOrigin = CGSize(
+                            width: value.startLocation.x - (b?.minX ?? value.startLocation.x),
+                            height: value.startLocation.y - (b?.minY ?? value.startLocation.y)
+                        )
                     }
                     guard tabCmdDragSourceIndex == modelIndex else { return }
-                    tabCmdDragTranslation = value.translation.width
                     lastDragLocationInStrip = value.location
                     proposeDropIfNeeded(pointerX: value.location.x)
                     updateTabStripEdgeScrollIntent()
@@ -1371,7 +1520,7 @@ struct SidebarContentView: View {
                     defer {
                         tabCmdDragSourceIndex = nil
                         tabCmdDragCategory = nil
-                        tabCmdDragTranslation = 0
+                        tabCmdDragGrabFromTabOrigin = .zero
                         tabCmdProposedDropIndex = nil
                         lastDragLocationInStrip = nil
                         edgeScrollDir = 0
@@ -1486,7 +1635,7 @@ struct RightSidebarContentView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.8)
+                .strokeBorder(HolosPanelChrome.mainWindowGradientTrailingColor, lineWidth: HolosPanelChrome.borderLineWidth)
         )
         .preferredColorScheme(.dark)
     }

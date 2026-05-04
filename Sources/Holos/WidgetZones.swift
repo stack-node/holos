@@ -70,8 +70,8 @@ final class WidgetZoneManager: ObservableObject {
     static let shared = WidgetZoneManager()
     private init() { load() }
 
-    // zoneID → extensionID, persisted
-    @Published private(set) var assignments: [String: String] = [:]
+    // zoneID → [extensionID], persisted
+    @Published private(set) var assignments: [String: [String]] = [:]
 
     private var dragEntries: [(id: String, frame: NSRect, panel: NSPanel, highlight: ZoneHighlightState)] = []
 
@@ -86,10 +86,15 @@ final class WidgetZoneManager: ObservableObject {
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: configURL),
-              let dict = try? JSONDecoder().decode([String: String].self, from: data)
-        else { return }
-        assignments = dict
+        guard let data = try? Data(contentsOf: configURL) else { return }
+        if let dict = try? JSONDecoder().decode([String: [String]].self, from: data) {
+            assignments = dict
+            return
+        }
+        if let old = try? JSONDecoder().decode([String: String].self, from: data) {
+            assignments = old.mapValues { [$0] }
+            save()
+        }
     }
 
     func save() {
@@ -130,8 +135,10 @@ final class WidgetZoneManager: ObservableObject {
     @discardableResult
     func commit(extensionID: String, at point: NSPoint, sourceZone: String? = nil) -> Bool {
         guard let entry = dragEntries.first(where: { $0.frame.contains(point) }) else { return false }
-        if let src = sourceZone, src != entry.id { assignments.removeValue(forKey: src) }
-        assignments[entry.id] = extensionID
+        if let src = sourceZone, src != entry.id { removeExtension(extensionID, fromZone: src) }
+        var list = assignments[entry.id] ?? []
+        if !list.contains(extensionID) { list.append(extensionID) }
+        assignments[entry.id] = list
         save()
         PinManager.shared.refreshWidgetPanels()
         return true
@@ -139,6 +146,15 @@ final class WidgetZoneManager: ObservableObject {
 
     func removeAssignment(for zoneID: String) {
         assignments.removeValue(forKey: zoneID)
+        save()
+        PinManager.shared.refreshWidgetPanels()
+    }
+
+    func removeExtension(_ extensionID: String, fromZone zoneID: String) {
+        guard var list = assignments[zoneID] else { return }
+        list.removeAll { $0 == extensionID }
+        if list.isEmpty { assignments.removeValue(forKey: zoneID) }
+        else            { assignments[zoneID] = list }
         save()
         PinManager.shared.refreshWidgetPanels()
     }
