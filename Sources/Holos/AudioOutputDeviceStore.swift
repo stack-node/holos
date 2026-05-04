@@ -36,6 +36,7 @@ private func hardwareDevicesChanged(
 /// Read-only enumeration of output-capable Core Audio devices; refreshes when the HAL device list changes.
 final class AudioOutputDeviceStore: ObservableObject {
     @Published private(set) var devices: [AudioOutputDevice] = []
+    @Published private(set) var defaultDeviceID: AudioDeviceID?
 
     init() {
         refresh()
@@ -54,11 +55,14 @@ final class AudioOutputDeviceStore: ObservableObject {
 
     func refresh() {
         let next = Self.fetchOutputDevices()
+        let defaultID = Self.fetchDefaultOutputDeviceID()
         if Thread.isMainThread {
             devices = next
+            defaultDeviceID = defaultID
         } else {
             DispatchQueue.main.async { [weak self] in
                 self?.devices = next
+                self?.defaultDeviceID = defaultID
             }
         }
     }
@@ -90,15 +94,36 @@ final class AudioOutputDeviceStore: ObservableObject {
 
     // MARK: - HAL queries
 
+    private static func fetchDefaultOutputDeviceID() -> AudioDeviceID? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(kSystemObject, &addr, 0, nil, &size, &deviceID) == noErr, deviceID != 0 else { return nil }
+        return deviceID
+    }
+
     private static func fetchOutputDevices() -> [AudioOutputDevice] {
         guard let ids = deviceObjectIDs() else { return [] }
         var result: [AudioOutputDevice] = []
         result.reserveCapacity(ids.count)
         for id in ids where hasOutputChannels(deviceID: id) {
-            result.append(makeDevice(deviceID: id))
+            let device = makeDevice(deviceID: id)
+            guard isUserVisibleOutputDevice(device) else { continue }
+            result.append(device)
         }
         result.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         return result
+    }
+
+    private static func isUserVisibleOutputDevice(_ device: AudioOutputDevice) -> Bool {
+        // Hide private routing endpoints created by Holos itself.
+        if device.name.hasPrefix("Holos ") { return false }
+        if device.uid?.hasPrefix("com.holos.route.") == true { return false }
+        return true
     }
 
     private static func deviceObjectIDs() -> [AudioDeviceID]? {

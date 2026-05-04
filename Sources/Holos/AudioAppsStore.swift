@@ -7,6 +7,11 @@ struct AudioApp: Identifiable, Equatable {
     let bundleIdentifier: String
     let displayName: String
     let trackLine: String?
+    let processObjectID: AudioObjectID?
+
+    static func == (lhs: AudioApp, rhs: AudioApp) -> Bool {
+        lhs.bundleIdentifier == rhs.bundleIdentifier
+    }
 }
 
 /// Enumerates apps currently outputting audio.
@@ -103,14 +108,16 @@ final class AudioAppsStore: ObservableObject {
         let bundleID = cfBundleID as String
         guard !bundleID.isEmpty else { return nil }
 
-        let displayName = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.localizedName ?? bundleID
-        return AudioApp(bundleIdentifier: bundleID, displayName: displayName, trackLine: nil)
+        guard let runningApp = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
+              runningApp.activationPolicy != .prohibited else { return nil }
+        let displayName = runningApp.localizedName ?? bundleID
+        return AudioApp(bundleIdentifier: bundleID, displayName: displayName, trackLine: nil, processObjectID: obj)
     }
 
     private func merge(coreAudioApps: [AudioApp], trackMap: [String: String]) -> [AudioApp] {
         coreAudioApps.map { app in
             let track = trackMap[app.bundleIdentifier]
-            return AudioApp(bundleIdentifier: app.bundleIdentifier, displayName: app.displayName, trackLine: track)
+            return AudioApp(bundleIdentifier: app.bundleIdentifier, displayName: app.displayName, trackLine: track, processObjectID: app.processObjectID)
         }
     }
 
@@ -168,7 +175,7 @@ final class AudioAppsStore: ObservableObject {
         guard let bundleId, !bundleId.isEmpty else { return [] }
         let track = trackLine(from: info)
         let name = displayName(bundleId: bundleId, info: info)
-        return [AudioApp(bundleIdentifier: bundleId, displayName: name, trackLine: track)]
+        return [AudioApp(bundleIdentifier: bundleId, displayName: name, trackLine: track, processObjectID: nil)]
     }
 
     private func startRefreshLoop() {
@@ -277,7 +284,7 @@ final class AudioAppsStore: ObservableObject {
         guard let info, isActivelyPlaying(info: info) else { return nil }
         let track = trackLine(from: info)
         let name = displayName(bundleId: bundleId, info: info)
-        return AudioApp(bundleIdentifier: bundleId, displayName: name, trackLine: track)
+        return AudioApp(bundleIdentifier: bundleId, displayName: name, trackLine: track, processObjectID: nil)
     }
 
     private func dedupe(_ apps: [AudioApp]) -> [AudioApp] {
