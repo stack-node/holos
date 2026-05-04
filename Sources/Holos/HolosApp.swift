@@ -3,15 +3,30 @@ import AppKit
 import Combine
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    static weak var shared: AppDelegate?
+
     private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
 
+    /// Screen rect of the menu bar icon, for positioning the panel when toggling via global shortcut.
+    var menuBarButtonScreenFrame: NSRect? {
+        guard let button = statusItem?.button, let win = button.window else { return nil }
+        return win.convertToScreen(button.frame)
+    }
+
+    static var menuBarButtonScreenFrame: NSRect? {
+        shared?.menuBarButtonScreenFrame
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Self.shared = self
         NSApp.setActivationPolicy(.accessory)
         setupStatusItem()
         _ = ModuleRegistry.shared
         _ = ExtensionManager.shared
         ExtensionManager.shared.syncSoundModuleWithRegistry()
+        _ = ShortcutRegistry.shared
+        ShortcutHotKeyController.shared.start()
 
         LlamaServer.shared.$state
             .receive(on: RunLoop.main)

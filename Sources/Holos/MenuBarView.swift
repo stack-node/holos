@@ -327,7 +327,12 @@ struct MenuBarView: View {
                 if moduleRegistry.isEnabled(.sound) {
                     if SubmoduleCatalog.soundTabIds.contains(nav.selectedTab),
                        moduleRegistry.isSubEnabled(.sound, nav.selectedTab) {
-                        placeholderPage(for: nav.selectedTab)
+                        if nav.selectedTab == "soundMap" {
+                            SoundMapView()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else {
+                            placeholderPage(for: nav.selectedTab)
+                        }
                     } else {
                         subModuleFeatureOffPlaceholder(
                             category: .sound,
@@ -1369,7 +1374,7 @@ private struct AppearanceSettingsContent: View {
 struct GlobalSettingsView: View {
     @State private var selectedTab = "Appearance"
 
-    private let tabs = ["Appearance", "Logs"]
+    private let tabs = ["Appearance", "Logs", "Shortcuts"]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1386,7 +1391,7 @@ struct GlobalSettingsView: View {
                         }
                         .padding(12)
                     }
-                } else {
+                } else if selectedTab == "Logs" {
                     VStack(alignment: .leading, spacing: 0) {
                         globalSettingsSection("Logs") {
                             LogView()
@@ -1394,6 +1399,11 @@ struct GlobalSettingsView: View {
                     }
                     .padding(12)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                } else {
+                    ScrollView {
+                        ShortcutsSettingsContent()
+                            .padding(12)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -1664,6 +1674,7 @@ private struct TabStripBoundsKey: PreferenceKey {
 struct SidebarContentView: View {
     @ObservedObject private var nav          = NavigationState.shared
     @ObservedObject private var sessionStore = DevelopmentSessionStore.shared
+    @ObservedObject private var extensionManager = ExtensionManager.shared
     @ObservedObject private var server       = LlamaServer.shared
     @ObservedObject private var config       = HolosConfig.shared
     @ObservedObject private var moduleRegistry = ModuleRegistry.shared
@@ -1873,21 +1884,68 @@ struct SidebarContentView: View {
 
                                     if !subs.isEmpty {
                                         ForEach(subs) { inst in
-                                            sidebarRow(
-                                                icon: item.icon,
-                                                label: sessionStore.displayTitle(for: inst),
-                                                color: item.color,
-                                                isSelected: sessionStore.selectedInstanceId == inst.id,
-                                                indent: 14
-                                            ) {
-                                                nav.globalTab = nil
-                                                nav.selectedTab = inst.context.rawValue
-                                                RightSidebarState.shared.context = inst.context
-                                                sessionStore.selectInstance(inst.id)
-                                            }
-                                            .contextMenu {
-                                                Button("Close session", role: .destructive) {
-                                                    sessionStore.removeSession(inst.id)
+                                            if item.tabId == RightContext.extensionBuilder.rawValue,
+                                               case .extensionBuilder(let eb) = inst.tool {
+                                                VStack(alignment: .leading, spacing: 2) {
+                                                    sidebarRow(
+                                                        icon: item.icon,
+                                                        label: sessionStore.displayTitle(for: inst),
+                                                        color: item.color,
+                                                        isSelected: sessionStore.isExtensionBuilderFileActive(inst.id, .entry),
+                                                        indent: 14
+                                                    ) {
+                                                        nav.globalTab = nil
+                                                        nav.selectedTab = inst.context.rawValue
+                                                        RightSidebarState.shared.context = inst.context
+                                                        sessionStore.selectExtensionBuilder(inst.id, activeFile: .entry)
+                                                    }
+                                                    .contextMenu {
+                                                        Button("Close session", role: .destructive) {
+                                                            sessionStore.removeSession(inst.id)
+                                                        }
+                                                    }
+
+                                                    if let extID = eb.selectedExtensionID,
+                                                       let holosExt = extensionManager.extensions.first(where: { $0.id == extID }) {
+                                                        ForEach(ExtensionBuilderSidebarFile.childRows(for: holosExt), id: \.self) { sf in
+                                                            sidebarRow(
+                                                                icon: "doc.text",
+                                                                label: sf.label(for: holosExt),
+                                                                color: item.color,
+                                                                isSelected: sessionStore.isExtensionBuilderFileActive(
+                                                                    inst.id,
+                                                                    sf == .manifest ? .manifest : .widget
+                                                                ),
+                                                                indent: 28
+                                                            ) {
+                                                                nav.globalTab = nil
+                                                                nav.selectedTab = inst.context.rawValue
+                                                                RightSidebarState.shared.context = inst.context
+                                                                sessionStore.selectExtensionBuilder(
+                                                                    inst.id,
+                                                                    activeFile: sf == .manifest ? .manifest : .widget
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                sidebarRow(
+                                                    icon: item.icon,
+                                                    label: sessionStore.displayTitle(for: inst),
+                                                    color: item.color,
+                                                    isSelected: sessionStore.selectedInstanceId == inst.id,
+                                                    indent: 14
+                                                ) {
+                                                    nav.globalTab = nil
+                                                    nav.selectedTab = inst.context.rawValue
+                                                    RightSidebarState.shared.context = inst.context
+                                                    sessionStore.selectInstance(inst.id)
+                                                }
+                                                .contextMenu {
+                                                    Button("Close session", role: .destructive) {
+                                                        sessionStore.removeSession(inst.id)
+                                                    }
                                                 }
                                             }
                                         }
@@ -2461,6 +2519,32 @@ private struct ExtensionBuilderPane: View {
         _model = ObservedObject(wrappedValue: model)
     }
 
+    private var activeSourceBinding: Binding<String> {
+        Binding(
+            get: {
+                switch model.activeFile {
+                case .entry: return model.entrySource
+                case .manifest: return model.manifestSource
+                case .widget: return model.widgetSource
+                }
+            },
+            set: { newValue in
+                switch model.activeFile {
+                case .entry: model.entrySource = newValue
+                case .manifest: model.manifestSource = newValue
+                case .widget: model.widgetSource = newValue
+                }
+            }
+        )
+    }
+
+    private var editorLanguage: CodeLanguage {
+        switch model.activeFile {
+        case .entry: return .python
+        case .manifest, .widget: return .javascript
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
@@ -2508,7 +2592,7 @@ private struct ExtensionBuilderPane: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .code:
-                    CodeEditorView(text: $model.entrySource, language: .python)
+                    CodeEditorView(text: activeSourceBinding, language: editorLanguage)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

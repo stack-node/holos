@@ -10,16 +10,13 @@ enum HolosWidgetZoneChromePosition: Equatable {
     case aboveSidebarStrip
     /// `below-left-sidebar` horizontal strip — flat top, round bottom.
     case belowSidebarStrip
-}
 
-private struct HolosWidgetZoneChromePositionKey: EnvironmentKey {
-    static let defaultValue: HolosWidgetZoneChromePosition = .besideSidebar
-}
-
-extension EnvironmentValues {
-    var holosWidgetZoneChromePosition: HolosWidgetZoneChromePosition {
-        get { self[HolosWidgetZoneChromePositionKey.self] }
-        set { self[HolosWidgetZoneChromePositionKey.self] = newValue }
+    static func from(zoneID: String) -> HolosWidgetZoneChromePosition {
+        switch zoneID {
+        case "above-left-sidebar": return .aboveSidebarStrip
+        case "below-left-sidebar": return .belowSidebarStrip
+        default: return .besideSidebar
+        }
     }
 }
 
@@ -30,24 +27,66 @@ struct HolosIslandSurface: View {
     var cornerRadius: CGFloat = 9
 
     var body: some View {
-        RoundedRectangle(cornerRadius: cornerRadius)
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             .fill(Color.white.opacity(0.04))
             .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.5)
             )
     }
 }
 
-/// Column tint + island, matching the sidebar stack. Corners follow `holosWidgetZoneChromePosition`.
+/// Column tint + island. Pass `position` from the host — `.background { }` often does not inherit `@Environment`, so we take an explicit value.
 struct HolosWidgetIslandChrome: View {
     @ObservedObject private var config = HolosConfig.shared
-    @Environment(\.holosWidgetZoneChromePosition) private var zonePosition
 
-    var cornerRadius: CGFloat = 9
+    var position: HolosWidgetZoneChromePosition
+    /// Matches sidebar island cards and main panel rounding (~12).
+    var cornerRadius: CGFloat = 12
 
     var body: some View {
-        let shape = zonePosition.islandShape(cornerRadius: cornerRadius)
+        let r = cornerRadius
+        Group {
+            switch position {
+            case .besideSidebar:
+                roundedStack(r: r)
+            case .aboveSidebarStrip:
+                unevenStack(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: r,
+                        bottomLeadingRadius: 0,
+                        bottomTrailingRadius: 0,
+                        topTrailingRadius: r,
+                        style: .continuous
+                    )
+                )
+            case .belowSidebarStrip:
+                unevenStack(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 0,
+                        bottomLeadingRadius: r,
+                        bottomTrailingRadius: r,
+                        topTrailingRadius: 0,
+                        style: .continuous
+                    )
+                )
+            }
+        }
+        .compositingGroup()
+    }
+
+    private func roundedStack(r: CGFloat) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: r, style: .continuous)
+                .fill(baseFill)
+            RoundedRectangle(cornerRadius: r, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+            RoundedRectangle(cornerRadius: r, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.5)
+        }
+    }
+
+    private func unevenStack(_ shape: UnevenRoundedRectangle) -> some View {
         ZStack {
             shape.fill(baseFill)
             shape.fill(Color.white.opacity(0.04))
@@ -60,33 +99,5 @@ struct HolosWidgetIslandChrome: View {
             return Color.black.opacity(config.backgroundOpacity * 0.42)
         }
         return Color(white: 0.08).opacity(0.55)
-    }
-}
-
-private extension HolosWidgetZoneChromePosition {
-    func islandShape(cornerRadius r: CGFloat) -> UnevenRoundedRectangle {
-        switch self {
-        case .besideSidebar:
-            return UnevenRoundedRectangle(
-                topLeadingRadius: r,
-                bottomLeadingRadius: r,
-                bottomTrailingRadius: r,
-                topTrailingRadius: r
-            )
-        case .aboveSidebarStrip:
-            return UnevenRoundedRectangle(
-                topLeadingRadius: r,
-                bottomLeadingRadius: 0,
-                bottomTrailingRadius: 0,
-                topTrailingRadius: r
-            )
-        case .belowSidebarStrip:
-            return UnevenRoundedRectangle(
-                topLeadingRadius: 0,
-                bottomLeadingRadius: r,
-                bottomTrailingRadius: r,
-                topTrailingRadius: 0
-            )
-        }
     }
 }

@@ -2,6 +2,22 @@ import Foundation
 
 // MARK: - Manifest
 
+/// Optional shortcut contributed by an extension (`action` is sent via stdin like other commands).
+struct ExtensionShortcutSpec: Codable, Hashable, Sendable {
+    let id: String
+    let title: String
+    let action: String
+    /// Virtual key code (e.g. `kVK_Space`); omit if the shortcut has no default.
+    var defaultKeyCode: UInt16?
+    /// Carbon modifier mask (`cmdKey | shiftKey | …`); must be nonzero with `defaultKeyCode`.
+    var defaultCarbonModifiers: UInt32?
+
+    var defaultBinding: KeyBinding? {
+        guard let k = defaultKeyCode, let m = defaultCarbonModifiers, m != 0 else { return nil }
+        return KeyBinding(keyCode: k, carbonModifiers: m)
+    }
+}
+
 struct ExtensionManifest: Decodable, Identifiable {
     let id: String
     let name: String
@@ -11,6 +27,23 @@ struct ExtensionManifest: Decodable, Identifiable {
     let provides: [String]
     /// Declarative SwiftUI widget tree (optional; else `widget.json` in the extension folder).
     let widget: ExtensionWidgetSpec?
+    let shortcuts: [ExtensionShortcutSpec]
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, version, description, entry, provides, widget, shortcuts
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        version = try c.decode(String.self, forKey: .version)
+        description = try c.decode(String.self, forKey: .description)
+        entry = try c.decode(String.self, forKey: .entry)
+        provides = try c.decodeIfPresent([String].self, forKey: .provides) ?? []
+        widget = try c.decodeIfPresent(ExtensionWidgetSpec.self, forKey: .widget)
+        shortcuts = try c.decodeIfPresent([ExtensionShortcutSpec].self, forKey: .shortcuts) ?? []
+    }
 }
 
 // MARK: - Run state
@@ -43,6 +76,7 @@ final class HolosExtension: ObservableObject, Identifiable {
             // Defer so we never re-enter `ExtensionManager.shared` during its static init
             // (`scan` → `start` → `runState` → this path → `PinManager` → `ExtensionManager.shared`).
             Task { @MainActor in PinManager.shared.refreshWidgetPanels() }
+            NotificationCenter.default.post(name: .holosExtensionRunStateChanged, object: id)
         }
     }
     @Published private(set) var widgetData: [String: String] = [:]

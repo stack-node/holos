@@ -52,6 +52,9 @@ private enum DevelopmentWorkspacePersistence {
             var selectedExtensionID: String?
             var editorMode: String
             var entrySource: String
+            var manifestSource: String?
+            var widgetSource: String?
+            var activeRelatedFile: String?
         }
     }
 
@@ -149,42 +152,128 @@ enum ExtensionBuilderEditorMode: String, CaseIterable {
     case code
 }
 
+/// Which file the builder is editing (`entry` = manifest’s Python entry; use sidebar parent row).
+enum ExtensionBuilderActiveFile: String, CaseIterable, Hashable {
+    case entry
+    case manifest
+    case widget
+}
+
+enum ExtensionBuilderSidebarFile: Hashable, Identifiable {
+    case manifest
+    case widget
+
+    var id: String {
+        switch self {
+        case .manifest: return "manifest"
+        case .widget: return "widget"
+        }
+    }
+
+    /// Extra rows under a session: manifest always; `widget.json` when present on disk.
+    static func childRows(for ext: HolosExtension) -> [ExtensionBuilderSidebarFile] {
+        var rows: [ExtensionBuilderSidebarFile] = [.manifest]
+        let w = ext.directory.appendingPathComponent("widget.json")
+        if FileManager.default.fileExists(atPath: w.path) {
+            rows.append(.widget)
+        }
+        return rows
+    }
+
+    func label(for ext: HolosExtension) -> String {
+        switch self {
+        case .manifest: return "manifest.json"
+        case .widget: return "widget.json"
+        }
+    }
+}
+
 @MainActor
 final class ExtensionBuilderSession: ObservableObject {
     @Published var selectedExtensionID: String?
     @Published var editorMode: ExtensionBuilderEditorMode = .code
+    @Published var activeFile: ExtensionBuilderActiveFile = .entry
     @Published var entrySource: String = ""
+    @Published var manifestSource: String = ""
+    @Published var widgetSource: String = ""
 
     func applySelectedExtensionID(_ id: String?) {
         selectedExtensionID = id
+        activeFile = .entry
         guard let id,
               let ext = ExtensionManager.shared.extensions.first(where: { $0.id == id })
         else {
             entrySource = ""
+            manifestSource = ""
+            widgetSource = ""
             return
         }
-        let entryURL = ext.directory.appendingPathComponent(ext.manifest.entry)
-        guard FileManager.default.fileExists(atPath: entryURL.path),
-              let content = try? String(contentsOf: entryURL, encoding: .utf8)
-        else {
-            entrySource = ""
-            return
-        }
-        entrySource = content
+        reloadAllSourcesFromDisk(for: ext)
         DevelopmentSessionStore.shared.sessionLabelsDidChange()
+    }
+
+    func focusActiveFile(_ file: ExtensionBuilderActiveFile) {
+        activeFile = file
+    }
+
+    private func reloadAllSourcesFromDisk(for ext: HolosExtension) {
+        let manifestURL = ext.directory.appendingPathComponent("manifest.json")
+        if FileManager.default.fileExists(atPath: manifestURL.path),
+           let t = try? String(contentsOf: manifestURL, encoding: .utf8) {
+            manifestSource = t
+        } else {
+            manifestSource = ""
+        }
+
+        let entryURL = ext.directory.appendingPathComponent(ext.manifest.entry)
+        if FileManager.default.fileExists(atPath: entryURL.path),
+           let t = try? String(contentsOf: entryURL, encoding: .utf8) {
+            entrySource = t
+        } else {
+            entrySource = ""
+        }
+
+        let widgetURL = ext.directory.appendingPathComponent("widget.json")
+        if FileManager.default.fileExists(atPath: widgetURL.path),
+           let t = try? String(contentsOf: widgetURL, encoding: .utf8) {
+            widgetSource = t
+        } else {
+            widgetSource = ""
+        }
     }
 
     func save() {
         guard let id = selectedExtensionID,
               let ext = ExtensionManager.shared.extensions.first(where: { $0.id == id })
         else { return }
-        let url = ext.directory.appendingPathComponent(ext.manifest.entry)
+
+        let root = ext.directory
+        let url: URL
+        switch activeFile {
+        case .entry:
+            url = root.appendingPathComponent(ext.manifest.entry)
+        case .manifest:
+            url = root.appendingPathComponent("manifest.json")
+        case .widget:
+            url = root.appendingPathComponent("widget.json")
+        }
+
+        let text: String
+        switch activeFile {
+        case .entry: text = entrySource
+        case .manifest: text = manifestSource
+        case .widget: text = widgetSource
+        }
+
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try? entrySource.write(to: url, atomically: true, encoding: .utf8)
+        try? text.write(to: url, atomically: true, encoding: .utf8)
         ExtensionManager.shared.scan()
+        if let refreshed = ExtensionManager.shared.extensions.first(where: { $0.id == id }) {
+            reloadAllSourcesFromDisk(for: refreshed)
+        }
         DevelopmentSessionStore.shared.sessionLabelsDidChange()
     }
 }
@@ -394,6 +483,25 @@ final class DevelopmentSessionStore: ObservableObject {
         syncCodeFileWatching()
     }
 
+    /// Selects an Extension Builder session and which file row is active (entry = session parent row).
+    func selectExtensionBuilder(_ instanceId: UUID, activeFile: ExtensionBuilderActiveFile) {
+        guard instance(for: instanceId) != nil else { return }
+        stopAllCodeWatching()
+        selectedInstanceId = instanceId
+        if let inst = instance(for: instanceId),
+           case .extensionBuilder(let m) = inst.tool {
+            m.focusActiveFile(activeFile)
+        }
+        syncCodeFileWatching()
+    }
+
+    func isExtensionBuilderFileActive(_ instanceId: UUID, _ activeFile: ExtensionBuilderActiveFile) -> Bool {
+        guard selectedInstanceId == instanceId,
+              let inst = instance(for: instanceId),
+              case .extensionBuilder(let m) = inst.tool else { return false }
+        return m.activeFile == activeFile
+    }
+
     func addSession(for context: RightContext) {
         NavigationState.shared.globalTab = nil
         NavigationState.shared.selectedTab = context.rawValue
@@ -547,7 +655,10 @@ final class DevelopmentSessionStore: ObservableObject {
                 let body = DevelopmentWorkspacePersistence.InstanceSnapshot.ExtensionBuilderBody(
                     selectedExtensionID: m.selectedExtensionID,
                     editorMode: m.editorMode.rawValue,
-                    entrySource: m.entrySource
+                    entrySource: m.entrySource,
+                    manifestSource: m.manifestSource,
+                    widgetSource: m.widgetSource,
+                    activeRelatedFile: m.activeFile.rawValue
                 )
                 snaps.append(DevelopmentWorkspacePersistence.InstanceSnapshot(
                     id: inst.id,
@@ -601,6 +712,9 @@ final class DevelopmentSessionStore: ObservableObject {
                 m.selectedExtensionID = body.selectedExtensionID
                 m.editorMode = ExtensionBuilderEditorMode(rawValue: body.editorMode) ?? .code
                 m.entrySource = body.entrySource
+                m.manifestSource = body.manifestSource ?? ""
+                m.widgetSource = body.widgetSource ?? ""
+                m.activeFile = ExtensionBuilderActiveFile(rawValue: body.activeRelatedFile ?? "") ?? .entry
                 restored.append(DevelopmentInstance(id: snap.id, context: ctx, tool: .extensionBuilder(m)))
             }
         }

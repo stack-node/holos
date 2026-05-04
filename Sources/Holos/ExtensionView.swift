@@ -1,20 +1,6 @@
 import SwiftUI
 import AppKit
 
-// MARK: - Widget zone layout (host → widget; not set by extension code)
-
-private struct HolosWidgetZoneVerticalStackKey: EnvironmentKey {
-    /// `true` = left strip: each card is only as tall as its content. `false` = above/below: fill the fixed row height.
-    static let defaultValue: Bool = true
-}
-
-extension EnvironmentValues {
-    var holosWidgetZoneVerticalStack: Bool {
-        get { self[HolosWidgetZoneVerticalStackKey.self] }
-        set { self[HolosWidgetZoneVerticalStackKey.self] = newValue }
-    }
-}
-
 // MARK: - Window drag exclusion
 
 private final class _NonDraggableView: NSView {
@@ -248,6 +234,8 @@ struct ExtensionRow: View {
 
 struct ExtensionWidgetView: View {
     @ObservedObject var ext: HolosExtension
+    /// Drives corner chrome; must not rely on SwiftUI environment inside `.background`.
+    var zoneID: String
 
     private var isWidgetExtension: Bool {
         ext.manifest.provides.contains("widget") || ext.widgetSpec != nil
@@ -263,9 +251,9 @@ struct ExtensionWidgetView: View {
         if !widgetExtensionMayShowContent {
             EmptyView()
         } else if let spec = ext.widgetSpec {
-            DeclarativeExtensionWidget(ext: ext, spec: spec)
+            DeclarativeExtensionWidget(ext: ext, spec: spec, zoneID: zoneID)
         } else if ext.manifest.provides.contains("widget") {
-            GenericExtensionWidget(ext: ext)
+            GenericExtensionWidget(ext: ext, zoneID: zoneID)
         } else {
             EmptyView()
         }
@@ -277,7 +265,19 @@ struct ExtensionWidgetView: View {
 private struct DeclarativeExtensionWidget: View {
     @ObservedObject var ext: HolosExtension
     let spec: ExtensionWidgetSpec
-    @Environment(\.holosWidgetZoneVerticalStack) private var zoneVerticalStack
+    let zoneID: String
+
+    private var zoneVerticalStack: Bool {
+        WidgetZoneManager.verticalStackZoneIDs.contains(zoneID)
+    }
+
+    private var chromePosition: HolosWidgetZoneChromePosition {
+        .from(zoneID: zoneID)
+    }
+
+    /// Flush edge toward the sidebar on above/below strips (no double-padding gap).
+    private var innerPadTop: CGFloat { zoneID == "below-left-sidebar" ? 0 : 8 }
+    private var innerPadBottom: CGFloat { zoneID == "above-left-sidebar" ? 0 : 8 }
 
     var body: some View {
         Group {
@@ -289,10 +289,12 @@ private struct DeclarativeExtensionWidget: View {
                     .foregroundStyle(.white.opacity(0.45))
             }
         }
-        .padding(.vertical, 8)
+        .padding(.top, innerPadTop)
+        .padding(.bottom, innerPadBottom)
         .frame(maxWidth: .infinity, maxHeight: zoneVerticalStack ? nil : .infinity, alignment: .leading)
-        .background(HolosWidgetIslandChrome(cornerRadius: 9))
-        .padding(.horizontal, 8)
+        .background(HolosWidgetIslandChrome(position: chromePosition))
+        .padding(.leading, 8)
+        .padding(.trailing, zoneID == "left-of-left-sidebar" ? 0 : 8)
     }
 }
 
@@ -478,6 +480,14 @@ private struct HorizontalPad: ViewModifier {
 // Generic fallback renderer (no `widget` in manifest / widget.json)
 private struct GenericExtensionWidget: View {
     @ObservedObject var ext: HolosExtension
+    let zoneID: String
+
+    private var chromePosition: HolosWidgetZoneChromePosition {
+        .from(zoneID: zoneID)
+    }
+
+    private var innerPadTop: CGFloat { zoneID == "below-left-sidebar" ? 0 : 8 }
+    private var innerPadBottom: CGFloat { zoneID == "above-left-sidebar" ? 0 : 8 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -502,9 +512,11 @@ private struct GenericExtensionWidget: View {
                 .padding(.horizontal, 10)
                 .padding(.top, 2)
         }
-        .padding(.vertical, 8)
-        .background(HolosWidgetIslandChrome(cornerRadius: 9))
-        .padding(.horizontal, 8)
+        .padding(.top, innerPadTop)
+        .padding(.bottom, innerPadBottom)
+        .background(HolosWidgetIslandChrome(position: chromePosition))
+        .padding(.leading, 8)
+        .padding(.trailing, zoneID == "left-of-left-sidebar" ? 0 : 8)
     }
 }
 
@@ -524,6 +536,19 @@ struct WidgetPanelContentView: View {
     private var outerPadding: CGFloat { stacksVertically ? 6 : 8 }
     private var slotSpacing: CGFloat { stacksVertically ? 10 : 9 }
 
+    /// No outer inset on the edge that meets the sidebar (above: bottom, below: top, left column: top/bottom).
+    private var outerPadTop: CGFloat {
+        if stacksVertically { return 0 }
+        if zoneID == "below-left-sidebar" { return 0 }
+        return outerPadding
+    }
+
+    private var outerPadBottom: CGFloat {
+        if stacksVertically { return 0 }
+        if zoneID == "above-left-sidebar" { return 0 }
+        return outerPadding
+    }
+
     var body: some View {
         Group {
             if stacksVertically {
@@ -534,19 +559,11 @@ struct WidgetPanelContentView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             }
         }
-        .padding(.horizontal, outerPadding)
-        .padding(.vertical, stacksVertically ? outerPadding + 1 : outerPadding)
+        .padding(.leading, outerPadding)
+        .padding(.trailing, stacksVertically ? 0 : outerPadding)
+        .padding(.top, outerPadTop)
+        .padding(.bottom, outerPadBottom)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .environment(\.holosWidgetZoneVerticalStack, stacksVertically)
-        .environment(\.holosWidgetZoneChromePosition, chromePosition(for: zoneID))
-    }
-
-    private func chromePosition(for zoneID: String) -> HolosWidgetZoneChromePosition {
-        switch zoneID {
-        case "above-left-sidebar": return .aboveSidebarStrip
-        case "below-left-sidebar": return .belowSidebarStrip
-        default: return .besideSidebar
-        }
     }
 
     @ViewBuilder
@@ -569,7 +586,7 @@ private struct ZoneSlotView: View {
     }
 
     var body: some View {
-        ExtensionWidgetView(ext: ext)
+        ExtensionWidgetView(ext: ext, zoneID: zoneID)
             .frame(maxWidth: .infinity, maxHeight: stacksVertically ? nil : .infinity)
             .opacity(isDragging ? 0.4 : 1)
             .scaleEffect(isDragging ? 0.96 : 1)

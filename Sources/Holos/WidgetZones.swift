@@ -75,7 +75,12 @@ final class WidgetZoneManager: ObservableObject {
 
     private var dragEntries: [(id: String, frame: NSRect, panel: NSPanel, highlight: ZoneHighlightState)] = []
 
-    static let zoneGap: CGFloat    = 5
+    /// Zero so pinned widget panels meet the sidebar edge with no seam gap.
+    static let zoneGap: CGFloat    = 0
+    /// Optical seam tweak (AppKit pts): above strip shifts down, below strip shifts up so borders meet adjacent panels.
+    private static let aboveStripFrameNudgeDown: CGFloat = 1
+    private static let belowStripFrameNudgeUp: CGFloat = 1
+
     static let zoneHeight: CGFloat = 72
     /// Narrow strip to the left of the left sidebar (matches zone height for balance).
     static let zoneWidth: CGFloat  = 72
@@ -103,14 +108,14 @@ final class WidgetZoneManager: ObservableObject {
         case "above-left-sidebar":
             return NSRect(
                 x: sf.minX,
-                y: sf.maxY + Self.zoneGap,
+                y: sf.maxY + Self.zoneGap - Self.aboveStripFrameNudgeDown,
                 width: sf.width,
                 height: Self.zoneHeight
             )
         case "below-left-sidebar":
             return NSRect(
                 x: sf.minX,
-                y: sf.minY - Self.zoneGap - Self.zoneHeight,
+                y: sf.minY - Self.zoneGap - Self.zoneHeight + Self.belowStripFrameNudgeUp,
                 width: sf.width,
                 height: Self.zoneHeight
             )

@@ -86,6 +86,24 @@ final class PinManager: ObservableObject {
         }
     }
 
+    /// Like `toggle(near:)` but uses the menu bar item frame when available (first open), else centers on the main screen.
+    func toggleFromGlobalShortcut() {
+        let rect = AppDelegate.menuBarButtonScreenFrame ?? Self.fallbackAnchorRectForShortcut()
+        toggle(near: rect)
+    }
+
+    private static func fallbackAnchorRectForShortcut() -> NSRect {
+        let width: CGFloat  = 380
+        let height: CGFloat = 500
+        guard let screen = NSScreen.main else {
+            return NSRect(x: 100, y: 100, width: width, height: height)
+        }
+        let vf = screen.visibleFrame
+        let x = vf.midX - width / 2
+        let y = vf.midY - height / 2
+        return NSRect(x: x, y: y, width: width, height: height)
+    }
+
     func show(near buttonRect: NSRect) {
         // Reuse existing panel — preserves all SwiftUI @State (tabs, sidebar state, etc.)
         if let p = panel {
