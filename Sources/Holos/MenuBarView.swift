@@ -114,6 +114,12 @@ private enum SidebarNavPalette {
         ),
     ]
 
+    static let utilitiesNavItems: [(tabId: String, icon: String, title: String, color: Color)] = [
+        (RightContext.codeEditor.rawValue, "curlybraces", "Code Editor", Color(red: 0.40, green: 0.72, blue: 1.00)),
+        (RightContext.textEditor.rawValue, "text.alignleft", "Text Editor", Color(red: 0.50, green: 0.85, blue: 0.95)),
+        (RightContext.terminal.rawValue, "terminal", "Terminal", Color(red: 0.38, green: 0.92, blue: 0.55)),
+    ]
+
     /// Accent for the **bottom** of the main window’s left border (selected sidebar row / global item).
     static func pageAccentColor(nav: NavigationState) -> Color {
         let cat = nav.selectedSidebarCategory
@@ -125,7 +131,9 @@ private enum SidebarNavPalette {
             return aiNavItems.first { $0.label == nav.selectedTab }?.color ?? cat.color
         case .sound:
             return soundNavItems.first { $0.tabId == nav.selectedTab }?.color ?? cat.color
-        case .development, .system:
+        case .development:
+            return utilitiesNavItems.first { $0.tabId == nav.selectedTab }?.color ?? cat.color
+        case .system:
             return cat.color
         }
     }
@@ -236,6 +244,65 @@ struct MenuBarView: View {
         }
     }
 
+    // MARK: Main window body
+
+    @ViewBuilder private var mainWindowContent: some View {
+        if let g = nav.globalTab {
+            globalPlaceholderPage(for: g)
+        } else {
+            switch nav.selectedSidebarCategory {
+            case .ai:
+                if nav.selectedTab == "Chats" {
+                    VStack(spacing: 0) {
+                        messagesArea
+                        inputSection
+                    }
+                    .padding(.top, TitleBarLayout.dragStripHeight)
+                } else {
+                    placeholderPage(for: nav.selectedTab)
+                }
+            case .development:
+                utilitiesMainPanel
+            case .sound:
+                placeholderPage(for: nav.selectedTab)
+            case .system:
+                systemCategoryPlaceholderPage
+            }
+        }
+    }
+
+    private var utilitiesMainPanel: some View {
+        Group {
+            switch rightState.context {
+            case .codeEditor: CodeEditorPane()
+            case .textEditor: TextEditorPane()
+            case .terminal:   TerminalPane()
+            }
+        }
+        .padding(.top, TitleBarLayout.dragStripHeight)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var systemCategoryPlaceholderPage: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: TitleBarLayout.dragStripHeight)
+            Spacer(minLength: 0)
+            VStack(spacing: 14) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 36, weight: .light))
+                    .foregroundStyle(SidebarCategory.system.color.opacity(0.5))
+                Text(SidebarCategory.system.rawValue)
+                    .font(.system(.title3, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.35))
+                Text("Coming soon")
+                    .font(.system(.caption))
+                    .foregroundStyle(.white.opacity(0.2))
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     // MARK: Main panel
 
     private var mainPanel: some View {
@@ -265,17 +332,7 @@ struct MenuBarView: View {
 
             // Content
             VStack(spacing: 0) {
-                if let g = nav.globalTab {
-                    globalPlaceholderPage(for: g)
-                } else if nav.selectedTab == "Chats" {
-                    VStack(spacing: 0) {
-                        messagesArea
-                        inputSection
-                    }
-                    .padding(.top, TitleBarLayout.dragStripHeight)
-                } else {
-                    placeholderPage(for: nav.selectedTab)
-                }
+                mainWindowContent
             }
             .zIndex(1)
 
@@ -1230,10 +1287,40 @@ struct LogView: View {
 final class NavigationState: ObservableObject {
     static let shared = NavigationState()
     private init() {}
+
+    private static let aiNavTabLabels: [String] = SidebarNavPalette.aiNavItems.map(\.label)
+    private static let soundTabIds: [String] = SidebarNavPalette.soundNavItems.map(\.tabId)
+
     @Published var selectedTab: String = "Chats"
     @Published var globalTab: String? = nil
     /// Drives the **top** of the main window’s left border (same as sidebar category tabs).
     @Published var selectedSidebarCategory: SidebarCategory = .ai
+
+    /// Keeps `selectedTab` and utility `RightSidebarState.context` consistent when switching category tabs.
+    @MainActor
+    func selectSidebarCategory(_ cat: SidebarCategory) {
+        globalTab = nil
+        selectedSidebarCategory = cat
+        switch cat {
+        case .ai:
+            if !Self.aiNavTabLabels.contains(selectedTab) {
+                selectedTab = "Chats"
+            }
+        case .development:
+            if RightContext(rawValue: selectedTab) == nil {
+                selectedTab = RightContext.codeEditor.rawValue
+            }
+            if let ctx = RightContext(rawValue: selectedTab) {
+                RightSidebarState.shared.context = ctx
+            }
+        case .sound:
+            if !Self.soundTabIds.contains(selectedTab) {
+                selectedTab = "soundMap"
+            }
+        case .system:
+            break
+        }
+    }
 }
 
 // MARK: - Sidebar content
@@ -1361,6 +1448,17 @@ struct SidebarContentView: View {
                                            isSelected: nav.globalTab == nil && nav.selectedTab == item.tabId) {
                                     nav.globalTab = nil
                                     nav.selectedTab = item.tabId
+                                }
+                            }
+                        } else if nav.selectedSidebarCategory == .development {
+                            ForEach(SidebarNavPalette.utilitiesNavItems, id: \.tabId) { item in
+                                sidebarRow(icon: item.icon, label: item.title, color: item.color,
+                                           isSelected: nav.globalTab == nil && nav.selectedTab == item.tabId) {
+                                    nav.globalTab = nil
+                                    nav.selectedTab = item.tabId
+                                    if let ctx = RightContext(rawValue: item.tabId) {
+                                        RightSidebarState.shared.context = ctx
+                                    }
                                 }
                             }
                         } else {
@@ -1575,7 +1673,7 @@ struct SidebarContentView: View {
         .opacity(isDraggingThis ? 0 : 1)
         .contentShape(Rectangle())
         .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.18)) { nav.selectedSidebarCategory = cat }
+            withAnimation(.easeInOut(duration: 0.18)) { nav.selectSidebarCategory(cat) }
         }
         .simultaneousGesture(
             DragGesture(minimumDistance: 6, coordinateSpace: .named(TabStripCoordinateSpace.name))
@@ -1699,12 +1797,18 @@ final class RightSidebarState: ObservableObject {
 // MARK: - Right sidebar
 
 struct RightSidebarContentView: View {
-    @ObservedObject private var rightState = RightSidebarState.shared
-    @ObservedObject private var config     = HolosConfig.shared
+    @ObservedObject private var config = HolosConfig.shared
 
     var body: some View {
         HStack(spacing: 0) {
-            content
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+                Text("Coming Soon")
+                    .font(.system(.title3, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.35))
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             SidebarResizeHandle().frame(width: 6)
         }
         .background(
@@ -1722,14 +1826,6 @@ struct RightSidebarContentView: View {
                 .strokeBorder(HolosPanelChrome.mainWindowGradientTrailingColor, lineWidth: HolosPanelChrome.borderLineWidth)
         )
         .preferredColorScheme(.dark)
-    }
-
-    @ViewBuilder private var content: some View {
-        switch rightState.context {
-        case .codeEditor: CodeEditorPane()
-        case .textEditor: TextEditorPane()
-        case .terminal:   TerminalPane()
-        }
     }
 }
 
@@ -1858,31 +1954,15 @@ private struct CodeEditorPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header row
-            HStack(spacing: 0) {
-                if rightState.showEmbeddedExplorer {
-                    RightContextPickerButton()
-                        .frame(width: 180)
-                        .frame(maxHeight: .infinity)
-                    Divider().opacity(0.12)
-                }
-
-                HStack(spacing: 8) {
-                    if !rightState.showEmbeddedExplorer { RightContextPickerButton() }
-                    Text(rightState.context.label)
-                        .font(.system(.callout, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.8))
-                    Spacer()
-                    filePickerButton
-                }
-                .padding(.horizontal, 12)
-                .frame(maxWidth: .infinity)
+            HStack {
+                Spacer(minLength: 0)
+                filePickerButton
             }
-            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
 
             Divider().opacity(0.12)
 
-            // Content row
             HStack(spacing: 0) {
                 if rightState.showEmbeddedExplorer {
                     FileExplorerView(onSelect: { item in model.open(item) },
@@ -1941,85 +2021,13 @@ private struct CodeEditorPane: View {
     }
 }
 
-// MARK: - Shared right pane context picker button
-
-private struct RightContextPickerButton: View {
-    @ObservedObject private var rightState = RightSidebarState.shared
-    @State private var showingPicker = false
-
-    var body: some View {
-        Button {
-            showingPicker.toggle()
-        } label: {
-            ZStack {
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(Color.white.opacity(0.08))
-                    .frame(width: 28, height: 28)
-                Image(systemName: rightState.context.icon)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.7))
-            }
-        }
-        .buttonStyle(.plain)
-        .frame(width: 28, height: 28)
-        .popover(isPresented: $showingPicker, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(RightContext.allCases) { ctx in
-                    Button {
-                        rightState.context = ctx
-                        showingPicker = false
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: ctx.icon)
-                                .font(.system(size: 13))
-                                .foregroundStyle(ctx == rightState.context ? .white.opacity(0.9) : .white.opacity(0.45))
-                                .frame(width: 18)
-                            Text(ctx.label)
-                                .font(.system(.callout))
-                                .foregroundStyle(ctx == rightState.context ? .white.opacity(0.9) : .white.opacity(0.55))
-                            Spacer(minLength: 8)
-                            if ctx == rightState.context {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.5))
-                            }
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.vertical, 4)
-            .frame(minWidth: 200)
-            .preferredColorScheme(.dark)
-        }
-    }
-}
-
 // MARK: - Text editor pane
 
 private struct TextEditorPane: View {
-    @ObservedObject private var rightState = RightSidebarState.shared
     @State private var text = ""
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack(spacing: 8) {
-                RightContextPickerButton()
-                Text(rightState.context.label)
-                    .font(.system(.callout, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.8))
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-
-            Divider().opacity(0.12)
-
             TextEditor(text: $text)
                 .font(.system(.body))
                 .scrollContentBackground(.hidden)
@@ -2036,7 +2044,6 @@ private struct TextEditorPane: View {
 // MARK: - Terminal pane
 
 private struct TerminalPane: View {
-    @ObservedObject private var rightState = RightSidebarState.shared
     @State private var lines: [String] = [
         "Holos terminal — no shell session yet.",
         "Lines echo locally; type `clear` to reset the buffer.",
@@ -2048,18 +2055,6 @@ private struct TerminalPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                RightContextPickerButton()
-                Text(rightState.context.label)
-                    .font(.system(.callout, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.8))
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-
-            Divider().opacity(0.12)
-
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 3) {
