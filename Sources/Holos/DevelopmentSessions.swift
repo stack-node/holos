@@ -40,6 +40,7 @@ private enum DevelopmentWorkspacePersistence {
 
         struct TextBody: Codable {
             var text: String
+            var openFilePath: String?
         }
 
         struct TerminalBody: Codable {
@@ -67,6 +68,41 @@ private enum DevelopmentWorkspacePersistence {
 @MainActor
 final class TextEditorSession: ObservableObject {
     @Published var text = ""
+    @Published var openFile: URL? = nil
+
+    func openDocument() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            guard let content = try? String(contentsOf: url, encoding: .utf8) else { return }
+            self.text = content
+            self.openFile = url
+            DevelopmentSessionStore.shared.sessionLabelsDidChange()
+        }
+    }
+
+    func save() {
+        guard let url = openFile else { return }
+        try? text.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    func saveAs() {
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        if let url = openFile {
+            panel.directoryURL = url.deletingLastPathComponent()
+            panel.nameFieldStringValue = url.lastPathComponent
+        }
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            try? self.text.write(to: url, atomically: true, encoding: .utf8)
+            self.openFile = url
+            DevelopmentSessionStore.shared.sessionLabelsDidChange()
+        }
+    }
 }
 
 // MARK: - Terminal session
@@ -150,11 +186,78 @@ final class DevelopmentSessionStore: ObservableObject {
     func displayTitle(for instance: DevelopmentInstance) -> String {
         let peers = instances(for: instance.context)
         let idx = (peers.firstIndex { $0.id == instance.id } ?? 0) + 1
-        switch instance.context {
-        case .codeEditor: return "Code \(idx)"
-        case .textEditor: return "Text \(idx)"
-        case .terminal:   return "Shell \(idx)"
+        switch instance.tool {
+        case .code(let m):
+            return Self.sidebarTitle(
+                fileURL: m.openFile,
+                untitledAmongPeers: peers.filter {
+                    if case .code(let cm) = $0.tool { return cm.openFile == nil }
+                    return false
+                },
+                instanceId: instance.id,
+                duplicatePeersMatchingURL: peers.filter {
+                    guard let u = m.openFile else { return false }
+                    if case .code(let cm) = $0.tool, let ou = cm.openFile {
+                        return ou.standardizedFileURL == u.standardizedFileURL
+                    }
+                    return false
+                }
+            )
+        case .text(let m):
+            return Self.sidebarTitle(
+                fileURL: m.openFile,
+                untitledAmongPeers: peers.filter {
+                    if case .text(let tm) = $0.tool { return tm.openFile == nil }
+                    return false
+                },
+                instanceId: instance.id,
+                duplicatePeersMatchingURL: peers.filter {
+                    guard let u = m.openFile else { return false }
+                    if case .text(let tm) = $0.tool, let ou = tm.openFile {
+                        return ou.standardizedFileURL == u.standardizedFileURL
+                    }
+                    return false
+                }
+            )
+        case .terminal:
+            return "Shell \(idx)"
         }
+    }
+
+    /// Call when a session’s displayed file name may change (open/save as); avoids refreshing the sidebar on every keystroke.
+    func sessionLabelsDidChange() {
+        objectWillChange.send()
+    }
+
+    private static func sidebarTitle(
+        fileURL: URL?,
+        untitledAmongPeers: [DevelopmentInstance],
+        instanceId: UUID,
+        duplicatePeersMatchingURL: [DevelopmentInstance]
+    ) -> String {
+        guard let url = fileURL else {
+            let n = untitledAmongPeers.count
+            guard n > 1 else { return "Untitled" }
+            let ord = (untitledAmongPeers.firstIndex { $0.id == instanceId } ?? 0) + 1
+            return "Untitled \(ord)"
+        }
+
+        let name = url.lastPathComponent
+        if duplicatePeersMatchingURL.count > 1 {
+            let ord = (duplicatePeersMatchingURL.firstIndex { $0.id == instanceId } ?? 0) + 1
+            return Self.truncateSidebarLabel("\(name) (\(ord))")
+        }
+        return Self.truncateSidebarLabel(name)
+    }
+
+    /// Shortens very long file names so sidebar rows stay readable.
+    private static func truncateSidebarLabel(_ s: String, maxLength: Int = 30) -> String {
+        guard s.count > maxLength else { return s }
+        let head = 12
+        let tail = 10
+        let start = String(s.prefix(head))
+        let end = String(s.suffix(tail))
+        return "\(start)…\(end)"
     }
 
     /// Ensures selection matches the current utilities tab; does not remove instances.
@@ -329,7 +432,10 @@ final class DevelopmentSessionStore: ObservableObject {
                     payload: .code(body)
                 ))
             case .text(let m):
-                let body = DevelopmentWorkspacePersistence.InstanceSnapshot.TextBody(text: m.text)
+                let body = DevelopmentWorkspacePersistence.InstanceSnapshot.TextBody(
+                    text: m.text,
+                    openFilePath: m.openFile?.path
+                )
                 snaps.append(DevelopmentWorkspacePersistence.InstanceSnapshot(
                     id: inst.id,
                     context: inst.context.rawValue,
@@ -377,6 +483,9 @@ final class DevelopmentSessionStore: ObservableObject {
             case .text(let body):
                 let m = TextEditorSession()
                 m.text = body.text
+                if let p = body.openFilePath {
+                    m.openFile = URL(fileURLWithPath: p)
+                }
                 restored.append(DevelopmentInstance(id: snap.id, context: ctx, tool: .text(m)))
             case .terminal(let body):
                 let m = TerminalSession()

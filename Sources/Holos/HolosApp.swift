@@ -9,8 +9,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         setupStatusItem()
-        LlamaServer.shared.start()
+        _ = ModuleRegistry.shared
         _ = ExtensionManager.shared
+        ExtensionManager.shared.syncSoundModuleWithRegistry()
 
         LlamaServer.shared.$state
             .receive(on: RunLoop.main)

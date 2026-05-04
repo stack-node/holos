@@ -217,6 +217,7 @@ struct MenuBarView: View {
     @ObservedObject private var chat         = ChatClient.shared
     @ObservedObject private var config       = HolosConfig.shared
     @ObservedObject private var pinManager   = PinManager.shared
+    @ObservedObject private var moduleRegistry = ModuleRegistry.shared
     @State private var inputText = ""
     @State private var edgePhase: CGFloat = 0
     @State private var isHoveringLeft   = false
@@ -253,23 +254,108 @@ struct MenuBarView: View {
         } else {
             switch nav.selectedSidebarCategory {
             case .ai:
-                if nav.selectedTab == "Chats" {
-                    VStack(spacing: 0) {
-                        messagesArea
-                        inputSection
+                if moduleRegistry.isEnabled(.ai) {
+                    if nav.selectedTab == SubmoduleCatalog.aiSettingsTabLabel {
+                        SettingsView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if SubmoduleCatalog.aiFeatureTabLabels.contains(nav.selectedTab),
+                              !moduleRegistry.isSubEnabled(.ai, nav.selectedTab) {
+                        subModuleFeatureOffPlaceholder(
+                            category: .ai,
+                            featureTitle: SubmoduleCatalog.title(for: .ai, id: nav.selectedTab)
+                        )
+                    } else if nav.selectedTab == "Chats" {
+                        VStack(spacing: 0) {
+                            messagesArea
+                            inputSection
+                        }
+                        .padding(.top, TitleBarLayout.dragStripHeight)
+                    } else {
+                        placeholderPage(for: nav.selectedTab)
                     }
-                    .padding(.top, TitleBarLayout.dragStripHeight)
                 } else {
-                    placeholderPage(for: nav.selectedTab)
+                    disabledModulePlaceholder
                 }
             case .development:
-                utilitiesMainPanel
+                if moduleRegistry.isEnabled(.development) {
+                    if RightContext(rawValue: nav.selectedTab) != nil,
+                       moduleRegistry.isSubEnabled(.development, nav.selectedTab) {
+                        utilitiesMainPanel
+                    } else {
+                        subModuleFeatureOffPlaceholder(
+                            category: .development,
+                            featureTitle: SubmoduleCatalog.title(for: .development, id: nav.selectedTab)
+                        )
+                    }
+                } else {
+                    disabledModulePlaceholder
+                }
             case .sound:
-                placeholderPage(for: nav.selectedTab)
+                if moduleRegistry.isEnabled(.sound) {
+                    if SubmoduleCatalog.soundTabIds.contains(nav.selectedTab),
+                       moduleRegistry.isSubEnabled(.sound, nav.selectedTab) {
+                        placeholderPage(for: nav.selectedTab)
+                    } else {
+                        subModuleFeatureOffPlaceholder(
+                            category: .sound,
+                            featureTitle: SubmoduleCatalog.title(for: .sound, id: nav.selectedTab)
+                        )
+                    }
+                } else {
+                    disabledModulePlaceholder
+                }
             case .system:
-                systemCategoryPlaceholderPage
+                if moduleRegistry.isEnabled(.system) {
+                    systemCategoryPlaceholderPage
+                } else {
+                    disabledModulePlaceholder
+                }
             }
         }
+    }
+
+    private var disabledModulePlaceholder: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: TitleBarLayout.dragStripHeight)
+            Spacer(minLength: 0)
+            VStack(spacing: 10) {
+                Image(systemName: "square.stack.3d.up.slash")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.white.opacity(0.28))
+                Text("This module is off")
+                    .font(.system(.callout, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.35))
+                Text("Enable it under Modules in the sidebar.")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.22))
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 24)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func subModuleFeatureOffPlaceholder(category: SidebarCategory, featureTitle: String) -> some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: TitleBarLayout.dragStripHeight)
+            Spacer(minLength: 0)
+            VStack(spacing: 10) {
+                Image(systemName: "slider.horizontal.2.square.on.square")
+                    .font(.system(size: 28))
+                    .foregroundStyle(category.color.opacity(0.35))
+                Text(featureTitle)
+                    .font(.system(.callout, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.4))
+                Text("This part is turned off. Enable it under Modules ▸ \(category.rawValue).")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.22))
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 24)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var utilitiesMainPanel: some View {
@@ -354,7 +440,7 @@ struct MenuBarView: View {
             // Left strip: all hover-only controls
             ZStack(alignment: .top) {
                 Color.clear
-                if isHoveringLeft {
+                if isHoveringLeft, moduleRegistry.isEnabled(.ai) {
                     VStack(spacing: 16) {
                         iconButton(pinManager.isPinned ? "pin.fill" : "pin",
                                    active: pinManager.isPinned) {
@@ -603,6 +689,9 @@ struct MenuBarView: View {
         }
         if tab == "Settings" {
             return AnyView(GlobalSettingsView().frame(maxWidth: .infinity, maxHeight: .infinity))
+        }
+        if tab == "Modules" {
+            return AnyView(ModulesPageView().frame(maxWidth: .infinity, maxHeight: .infinity))
         }
         let meta: (icon: String, color: Color) = {
             switch tab {
@@ -903,6 +992,119 @@ struct PillTabStrip: View {
                 .buttonStyle(.borderless)
             }
         }
+    }
+}
+
+// MARK: - Modules (feature toggles)
+
+struct ModulesPageView: View {
+    @ObservedObject private var modules = ModuleRegistry.shared
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: TitleBarLayout.dragStripHeight)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Turn on only what you want. Top-level modules default off. Expand a module to enable individual parts. Configuration screens (e.g. AI paths) are not sub-modules.")
+                        .font(.system(.callout))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    ForEach(SidebarCategory.allCases, id: \.self) { cat in
+                        moduleToggleRow(cat)
+                        if modules.isEnabled(cat) {
+                            let subIds = SubmoduleCatalog.ids(for: cat)
+                            if !subIds.isEmpty {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ForEach(subIds, id: \.self) { sid in
+                                        subModuleToggleRow(category: cat, id: sid)
+                                    }
+                                }
+                                .padding(.leading, 12)
+                                .padding(.top, 2)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func moduleToggleRow(_ cat: SidebarCategory) -> some View {
+        Toggle(isOn: Binding(
+            get: { modules.isEnabled(cat) },
+            set: { modules.setEnabled(cat, $0) }
+        )) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: cat.icon)
+                    .font(.system(size: 16))
+                    .foregroundStyle(cat.color)
+                    .frame(width: 22, alignment: .center)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(cat.rawValue)
+                        .font(.system(.body, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.9))
+                    Text(moduleBlurb(for: cat))
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.4))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .toggleStyle(.switch)
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.06)))
+    }
+
+    private func moduleBlurb(for cat: SidebarCategory) -> String {
+        switch cat {
+        case .ai:
+            return "Chats, prompt refinement, and the local llama server stay off when disabled."
+        case .development:
+            return "Code editor, text editor, and terminal sessions."
+        case .system:
+            return "System tools and status."
+        case .sound:
+            return "Sound pages and extension microphone / spectrum capture."
+        }
+    }
+
+    private func subModuleToggleRow(category: SidebarCategory, id: String) -> some View {
+        let title = SubmoduleCatalog.title(for: category, id: id)
+        let reqs = SubmoduleCatalog.hardRequirements(for: category, id: id)
+        let depText: String? = {
+            guard !reqs.isEmpty else { return nil }
+            let names = reqs.map { SubmoduleCatalog.title(for: category, id: $0) }.joined(separator: ", ")
+            return "Requires \(names). Enabling turns those on; turning a required part off disables dependents (e.g. Chats needs Models)."
+        }()
+        return VStack(alignment: .leading, spacing: 4) {
+            Toggle(isOn: Binding(
+                get: { modules.isSubEnabled(category, id) },
+                set: { modules.setSubEnabled(category, id, $0) }
+            )) {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(.system(.subheadline, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.88))
+                        if let depText {
+                            Text(depText)
+                                .font(.system(.caption2))
+                                .foregroundStyle(.white.opacity(0.35))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            .toggleStyle(.switch)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
     }
 }
 
@@ -1319,18 +1521,92 @@ final class NavigationState: ObservableObject {
         switch cat {
         case .ai:
             if !Self.aiNavTabLabels.contains(selectedTab) {
-                selectedTab = "Chats"
+                selectedTab = ModuleRegistry.shared.preferredSelectedTab(for: .ai)
             }
         case .development:
             if RightContext(rawValue: selectedTab) == nil {
-                selectedTab = RightContext.codeEditor.rawValue
+                selectedTab = ModuleRegistry.shared.preferredSelectedTab(for: .development)
             }
             if let ctx = RightContext(rawValue: selectedTab) {
                 RightSidebarState.shared.context = ctx
             }
         case .sound:
             if !Self.soundTabIds.contains(selectedTab) {
-                selectedTab = "soundMap"
+                selectedTab = ModuleRegistry.shared.preferredSelectedTab(for: .sound)
+            }
+        case .system:
+            break
+        }
+        sanitizeSubmoduleNavigation()
+    }
+
+    /// Keeps selection valid when modules are toggled; with none enabled, sends users to **Modules** (or keeps **Settings** / **Extensions**).
+    @MainActor
+    func sanitizeModuleNavigation() {
+        let reg = ModuleRegistry.shared
+        let enabled = SidebarCategory.allCases.filter { reg.isEnabled($0) }
+
+        if enabled.isEmpty {
+            if let g = globalTab {
+                if g == "Settings" || g == "Modules" || g == "Extensions" { return }
+                globalTab = "Modules"
+            } else {
+                globalTab = "Modules"
+            }
+            return
+        }
+
+        if globalTab == "Modules" {
+            return
+        }
+        if globalTab == "Settings" || globalTab == "Extensions" {
+            return
+        }
+
+        if !reg.isEnabled(selectedSidebarCategory) {
+            globalTab = nil
+            selectSidebarCategory(enabled[0])
+        }
+
+        sanitizeSubmoduleNavigation()
+    }
+
+    /// Keeps `selectedTab` consistent with **sub-modules** (and dependency rules like Chats → Models).
+    @MainActor
+    func sanitizeSubmoduleNavigation() {
+        let reg = ModuleRegistry.shared
+        guard globalTab == nil else { return }
+
+        switch selectedSidebarCategory {
+        case .ai:
+            guard reg.isEnabled(.ai) else { return }
+            if selectedTab == SubmoduleCatalog.aiSettingsTabLabel { return }
+            if SubmoduleCatalog.aiFeatureTabLabels.contains(selectedTab), !reg.isSubEnabled(.ai, selectedTab) {
+                selectedTab = reg.preferredSelectedTab(for: .ai)
+            } else if !Self.aiNavTabLabels.contains(selectedTab) {
+                selectedTab = reg.preferredSelectedTab(for: .ai)
+            }
+        case .development:
+            guard reg.isEnabled(.development) else { return }
+            if RightContext(rawValue: selectedTab) != nil {
+                if !reg.isSubEnabled(.development, selectedTab) {
+                    selectedTab = reg.preferredSelectedTab(for: .development)
+                    if let next = RightContext(rawValue: selectedTab) {
+                        RightSidebarState.shared.context = next
+                    }
+                }
+            } else {
+                selectedTab = reg.preferredSelectedTab(for: .development)
+                if let ctx = RightContext(rawValue: selectedTab) {
+                    RightSidebarState.shared.context = ctx
+                }
+            }
+        case .sound:
+            guard reg.isEnabled(.sound) else { return }
+            if SubmoduleCatalog.soundTabIds.contains(selectedTab), !reg.isSubEnabled(.sound, selectedTab) {
+                selectedTab = reg.preferredSelectedTab(for: .sound)
+            } else if !Self.soundTabIds.contains(selectedTab) {
+                selectedTab = reg.preferredSelectedTab(for: .sound)
             }
         case .system:
             break
@@ -1356,6 +1632,7 @@ struct SidebarContentView: View {
     @ObservedObject private var sessionStore = DevelopmentSessionStore.shared
     @ObservedObject private var server       = LlamaServer.shared
     @ObservedObject private var config       = HolosConfig.shared
+    @ObservedObject private var moduleRegistry = ModuleRegistry.shared
     @State private var categoryOrder  = SidebarCategory.loadSavedTabOrder()
     @State private var tabStripBounds: [SidebarCategory: CGRect] = [:]
     @State private var tabCmdDragSourceIndex: Int?
@@ -1386,6 +1663,15 @@ struct SidebarContentView: View {
         sidebarNavCanScroll && sidebarNavClipOffsetY < sidebarNavMaxClipOffsetY - sidebarNavScrollEdgeEpsilon
     }
 
+    /// Category tabs that are **on** in Modules — hidden when off.
+    private var visibleStripCategories: [SidebarCategory] {
+        categoryTabsForStrip.filter { moduleRegistry.isEnabled($0) }
+    }
+
+    private var allModulesEnabledForReorder: Bool {
+        SidebarCategory.allCases.allSatisfy { moduleRegistry.isEnabled($0) }
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             LeftSidebarResizeHandle()
@@ -1397,7 +1683,14 @@ struct SidebarContentView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         ZStack(alignment: .topLeading) {
                             HStack(spacing: 4) {
-                                ForEach(categoryTabsForStrip, id: \.self) { cat in
+                                if visibleStripCategories.isEmpty {
+                                    Text("No Modules Enabled")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(.white.opacity(0.35))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 10)
+                                }
+                                ForEach(visibleStripCategories, id: \.self) { cat in
                                     let modelIndex = categoryOrder.firstIndex(of: cat) ?? 0
                                     sidebarCategoryTab(cat: cat, modelIndex: modelIndex)
                                         .id(cat)
@@ -1450,24 +1743,78 @@ struct SidebarContentView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         // Nav items per category
-                        if nav.selectedSidebarCategory == .ai {
-                            ForEach(SidebarNavPalette.aiNavItems, id: \.label) { item in
+                        if moduleRegistry.enabledCategories.isEmpty {
+                            VStack(spacing: 10) {
+                                Text("No Modules Enabled")
+                                    .font(.system(.callout, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.42))
+                                Text("Turn on AI, Utilities, System, or Sound in Modules below.")
+                                    .font(.caption)
+                                    .foregroundStyle(.white.opacity(0.28))
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal, 12)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 36)
+                            .padding(.bottom, 16)
+                        } else if nav.selectedSidebarCategory == .ai, moduleRegistry.isEnabled(.ai) {
+                            ForEach(
+                                SidebarNavPalette.aiNavItems.filter { row in
+                                    if row.label == SubmoduleCatalog.aiSettingsTabLabel { return true }
+                                    return moduleRegistry.isSubEnabled(.ai, row.label)
+                                },
+                                id: \.label
+                            ) { item in
                                 sidebarRow(icon: item.icon, label: item.label, color: item.color,
                                            isSelected: nav.globalTab == nil && nav.selectedTab == item.label) {
                                     nav.globalTab = nil
                                     nav.selectedTab = item.label
                                 }
                             }
-                        } else if nav.selectedSidebarCategory == .sound {
-                            ForEach(SidebarNavPalette.soundNavItems) { item in
-                                sidebarRow(icon: item.icon, label: item.title, color: item.color,
-                                           isSelected: nav.globalTab == nil && nav.selectedTab == item.tabId) {
-                                    nav.globalTab = nil
-                                    nav.selectedTab = item.tabId
+                        } else if nav.selectedSidebarCategory == .sound, moduleRegistry.isEnabled(.sound) {
+                            if SubmoduleCatalog.soundTabIds.allSatisfy({ !moduleRegistry.isSubEnabled(.sound, $0) }) {
+                                VStack(spacing: 8) {
+                                    Text("No sound pages enabled")
+                                        .font(.system(.callout, weight: .semibold))
+                                        .foregroundStyle(.white.opacity(0.38))
+                                    Text("Turn on Map or Mixer under Modules ▸ Sound.")
+                                        .font(.caption)
+                                        .foregroundStyle(.white.opacity(0.24))
+                                        .multilineTextAlignment(.center)
+                                        .padding(.horizontal, 8)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, 28)
+                            } else {
+                                ForEach(
+                                    SidebarNavPalette.soundNavItems.filter { moduleRegistry.isSubEnabled(.sound, $0.tabId) }
+                                ) { item in
+                                    sidebarRow(icon: item.icon, label: item.title, color: item.color,
+                                               isSelected: nav.globalTab == nil && nav.selectedTab == item.tabId) {
+                                        nav.globalTab = nil
+                                        nav.selectedTab = item.tabId
+                                    }
                                 }
                             }
-                        } else if nav.selectedSidebarCategory == .development {
-                            ForEach(SidebarNavPalette.utilitiesNavItems, id: \.tabId) { item in
+                        } else if nav.selectedSidebarCategory == .development, moduleRegistry.isEnabled(.development) {
+                            if RightContext.allCases.allSatisfy({ !moduleRegistry.isSubEnabled(.development, $0.rawValue) }) {
+                                VStack(spacing: 8) {
+                                    Text("No utilities enabled")
+                                        .font(.system(.callout, weight: .semibold))
+                                        .foregroundStyle(.white.opacity(0.38))
+                                    Text("Turn on Code Editor, Text Editor, or Terminal under Modules ▸ Utilities.")
+                                        .font(.caption)
+                                        .foregroundStyle(.white.opacity(0.24))
+                                        .multilineTextAlignment(.center)
+                                        .padding(.horizontal, 8)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, 28)
+                            } else {
+                            ForEach(
+                                SidebarNavPalette.utilitiesNavItems.filter { moduleRegistry.isSubEnabled(.development, $0.tabId) },
+                                id: \.tabId
+                            ) { item in
                                 let context = RightContext(rawValue: item.tabId)!
                                 let subs = sessionStore.instances(for: context)
                                 VStack(alignment: .leading, spacing: 2) {
@@ -1514,7 +1861,8 @@ struct SidebarContentView: View {
                                     }
                                 }
                             }
-                        } else {
+                            }
+                        } else if nav.selectedSidebarCategory == .system, moduleRegistry.isEnabled(.system) {
                             VStack(spacing: 12) {
                                 Image(systemName: nav.selectedSidebarCategory.icon)
                                     .font(.system(size: 28))
@@ -1528,6 +1876,18 @@ struct SidebarContentView: View {
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.top, 40)
+                        } else if !moduleRegistry.isEnabled(nav.selectedSidebarCategory) {
+                            VStack(spacing: 10) {
+                                Text("Module off")
+                                    .font(.system(.callout, weight: .medium))
+                                    .foregroundStyle(.white.opacity(0.38))
+                                Text("Enable \(nav.selectedSidebarCategory.rawValue) in Modules.")
+                                    .font(.caption)
+                                    .foregroundStyle(.white.opacity(0.25))
+                                    .multilineTextAlignment(.center)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 36)
                         }
 
                         MacScrollViewChrome(
@@ -1731,7 +2091,7 @@ struct SidebarContentView: View {
         .simultaneousGesture(
             DragGesture(minimumDistance: 6, coordinateSpace: .named(TabStripCoordinateSpace.name))
                 .onChanged { value in
-                    guard NSEvent.modifierFlags.contains(.command) else { return }
+                    guard NSEvent.modifierFlags.contains(.command), allModulesEnabledForReorder else { return }
                     if tabCmdDragSourceIndex == nil {
                         tabCmdDragSourceIndex = modelIndex
                         tabCmdDragCategory = cat
@@ -2148,6 +2508,15 @@ private struct TextEditorPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack {
+                Spacer(minLength: 0)
+                textFileToolbarButton
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+
+            Divider().opacity(0.12)
+
             TextEditor(text: $model.text)
                 .font(.system(.body))
                 .scrollContentBackground(.hidden)
@@ -2158,6 +2527,31 @@ private struct TextEditorPane: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .preferredColorScheme(.dark)
+    }
+
+    private var textFileToolbarButton: some View {
+        Button {
+            model.openDocument()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "doc.text")
+                    .font(.system(size: 10, weight: .medium))
+                Text(model.openFile?.lastPathComponent ?? "Open…")
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(.white.opacity(0.5))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.white.opacity(0.07)))
+        }
+        .buttonStyle(.borderless)
+        .contextMenu {
+            Button("Open…") { model.openDocument() }
+            Button("Save") { model.save() }
+                .disabled(model.openFile == nil)
+            Button("Save As…") { model.saveAs() }
+        }
     }
 }
 

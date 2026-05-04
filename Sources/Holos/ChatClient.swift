@@ -19,6 +19,8 @@ final class ChatClient: ObservableObject {
     private var streamTask: Task<Void, Never>?
 
     func send(_ userMessage: String) {
+        guard ModuleRegistry.shared.isEnabled(.ai) else { return }
+        guard ModuleRegistry.shared.isSubEnabled(.ai, "Chats") else { return }
         let trimmed = userMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -93,6 +95,8 @@ final class ChatClient: ObservableObject {
     private var refineTask: Task<Void, Never>?
 
     func refine(_ input: String) {
+        guard ModuleRegistry.shared.isEnabled(.ai) else { return }
+        guard ModuleRegistry.shared.isSubEnabled(.ai, "Chats") else { return }
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 

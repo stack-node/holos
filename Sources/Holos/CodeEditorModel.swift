@@ -20,6 +20,7 @@ final class CodeEditorSession: ObservableObject {
         language = item.detectedLanguage()
         openFile = item.url
         if RightSidebarState.shared.autoReload { startWatching() }
+        DevelopmentSessionStore.shared.sessionLabelsDidChange()
     }
 
     func save() {
@@ -39,6 +40,7 @@ final class CodeEditorSession: ObservableObject {
             try? self.code.write(to: url, atomically: true, encoding: .utf8)
             self.openFile = url
             self.language = FileItem(url: url, isDirectory: false, depth: 0).detectedLanguage()
+            DevelopmentSessionStore.shared.sessionLabelsDidChange()
         }
     }
 

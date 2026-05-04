@@ -125,14 +125,31 @@ final class HolosExtension: ObservableObject, Identifiable {
             return
         }
 
-        if manifest.provides.contains("audio") {
-            let capture = AudioCapture(bands: 20)
-            capture.onBands = { [weak self] bands, rms in
-                self?.sendAudioBands(bands, rms: rms)
-            }
-            capture.start()
-            audioCapture = capture
+        startAudioCaptureIfNeeded()
+    }
+
+    private func startAudioCaptureIfNeeded() {
+        guard manifest.provides.contains("audio") else { return }
+        guard ModuleRegistry.shared.isEnabled(.sound) else { return }
+        guard audioCapture == nil else { return }
+        let capture = AudioCapture(bands: 20)
+        capture.onBands = { [weak self] bands, rms in
+            self?.sendAudioBands(bands, rms: rms)
         }
+        capture.start()
+        audioCapture = capture
+    }
+
+    /// Stops or starts mic capture for extensions that declare `audio` without restarting the extension process.
+    func applySoundModulePreference(_ soundModuleEnabled: Bool) {
+        guard manifest.provides.contains("audio") else { return }
+        if !soundModuleEnabled {
+            audioCapture?.stop()
+            audioCapture = nil
+            return
+        }
+        guard case .running = runState else { return }
+        startAudioCaptureIfNeeded()
     }
 
     func stop() {
@@ -248,6 +265,14 @@ final class ExtensionManager: ObservableObject {
             return HolosExtension(manifest: manifest, directory: url)
         }.sorted { $0.manifest.name < $1.manifest.name }
         startAutoStartExtensions()
+        syncSoundModuleWithRegistry()
+    }
+
+    func syncSoundModuleWithRegistry() {
+        let on = ModuleRegistry.shared.isEnabled(.sound)
+        for ext in extensions {
+            ext.applySoundModulePreference(on)
+        }
     }
 
     // MARK: Bootstrap
