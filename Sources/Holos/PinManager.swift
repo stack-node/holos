@@ -10,15 +10,20 @@ final class KeyablePanel: NSPanel {
 @MainActor
 final class PinManager: ObservableObject {
     static let shared = PinManager()
-    private init() {}
+    private init() {
+        let stored = UserDefaults.standard.double(forKey: Self.leftSidebarWidthKey)
+        if stored >= leftSidebarMinW && stored <= leftSidebarMaxW {
+            sidebarW = stored
+        }
+    }
 
     @Published private(set) var isShowing = false
     @Published var isSticky = false
-    @Published var isMinimal = false {
-        didSet { applyMinimalResize() }
-    }
-    @Published var isPinned = true {
-        didSet { applyPinState() }
+    @Published var isPinned = PinManager.loadIsPinnedFromDefaults() {
+        didSet {
+            UserDefaults.standard.set(isPinned, forKey: Self.isPinnedKey)
+            applyPinState()
+        }
     }
     @Published private(set) var isSidebarOpen = false
     @Published private(set) var isRightSidebarOpen = false
@@ -27,6 +32,7 @@ final class PinManager: ObservableObject {
     private var sidebarPanel: NSPanel?
     private var rightSidebarPanel: NSPanel?
     private var blurView: NSVisualEffectView?
+    private var mainResizeOverlay: MainWindowResizeChromeView?
     private var sidebarBlurView: NSVisualEffectView?
     private var rightSidebarBlurView: NSVisualEffectView?
     var mainPanelFrame: NSRect?    { panel?.frame }
@@ -60,6 +66,7 @@ final class PinManager: ObservableObject {
             if isRightSidebarOpen { rightSidebarPanel?.makeKeyAndOrderFront(nil) }
             NSApp.activate(ignoringOtherApps: true)
             isShowing = true
+            refreshWidgetPanels()
             return
         }
 
@@ -89,10 +96,10 @@ final class PinManager: ObservableObject {
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         p.isOpaque = false
         p.backgroundColor = .clear
-        p.minSize = NSSize(width: 240, height: 240)
+        p.minSize = NSSize(width: 240, height: 1)
 
         let config = HolosConfig.shared
-        let blur = NSVisualEffectView()
+        let blur = MovableVisualEffectView()
         blur.material = config.blurMaterial
         blur.blendingMode = .behindWindow
         blur.state = .active
@@ -102,7 +109,7 @@ final class PinManager: ObservableObject {
         blur.layer?.masksToBounds = true
         blurView = blur
 
-        let hosting = NSHostingView(rootView: MenuBarView())
+        let hosting = MenuBarHostingView(rootView: MenuBarView())
         hosting.translatesAutoresizingMaskIntoConstraints = false
         blur.addSubview(hosting)
         NSLayoutConstraint.activate([
@@ -111,6 +118,18 @@ final class PinManager: ObservableObject {
             hosting.leadingAnchor.constraint(equalTo: blur.leadingAnchor),
             hosting.trailingAnchor.constraint(equalTo: blur.trailingAnchor),
         ])
+
+        let resizeEdge = MainWindowResizeChromeView()
+        resizeEdge.translatesAutoresizingMaskIntoConstraints = false
+        blur.addSubview(resizeEdge)
+        NSLayoutConstraint.activate([
+            resizeEdge.topAnchor.constraint(equalTo: blur.topAnchor),
+            resizeEdge.bottomAnchor.constraint(equalTo: blur.bottomAnchor),
+            resizeEdge.leadingAnchor.constraint(equalTo: blur.leadingAnchor),
+            resizeEdge.trailingAnchor.constraint(equalTo: blur.trailingAnchor),
+        ])
+        mainResizeOverlay = resizeEdge
+
         p.contentView = blur
 
         config.$blurStrength
@@ -131,11 +150,20 @@ final class PinManager: ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
         panel = p
         isShowing = true
+        refreshWidgetPanels()
+        applyPinState()
     }
 
     func hide() {
         // Just hide panels — don't tear down, preserves state for next show
-        widgetPanels.values.forEach { $0.orderOut(nil) }
+        if let main = panel {
+            for w in widgetPanels.values {
+                if w.parent === main { main.removeChildWindow(w) }
+                w.orderOut(nil)
+            }
+        } else {
+            widgetPanels.values.forEach { $0.orderOut(nil) }
+        }
         sidebarPanel?.orderOut(nil)
         rightSidebarPanel?.orderOut(nil)
         panel?.orderOut(nil)
@@ -144,7 +172,17 @@ final class PinManager: ObservableObject {
 
     // MARK: - Sidebar
 
-    private let sidebarW: CGFloat       = 200
+    private static let isPinnedKey = "holos.windowPinned"
+    private static let leftSidebarWidthKey = "holos.leftSidebarWidth"
+
+    private static func loadIsPinnedFromDefaults() -> Bool {
+        guard UserDefaults.standard.object(forKey: isPinnedKey) != nil else { return true }
+        return UserDefaults.standard.bool(forKey: isPinnedKey)
+    }
+    private let leftSidebarMinW: CGFloat = 160
+    private let leftSidebarMaxW: CGFloat = 480
+
+    @Published private(set) var sidebarW: CGFloat = 200
     private(set) var rightSidebarW: CGFloat = 340
     private let sidebarGap: CGFloat     = 0    // flush with main window
     private let sidebarInset: CGFloat   = 14  // sidebar shorter top+bottom
@@ -169,6 +207,14 @@ final class PinManager: ObservableObject {
             height: sp.frame.height
         )
         sp.setFrame(frame, display: true)
+    }
+
+    func resizeLeftSidebar(to width: CGFloat) {
+        guard let main = panel, let sp = sidebarPanel else { return }
+        sidebarW = min(leftSidebarMaxW, max(leftSidebarMinW, width))
+        UserDefaults.standard.set(sidebarW, forKey: Self.leftSidebarWidthKey)
+        sp.setFrame(sidebarFrame(for: main.frame), display: true)
+        reframeWidgetPanels()
     }
 
     private func sidebarFrame(for mainFrame: NSRect) -> NSRect {
@@ -198,7 +244,7 @@ final class PinManager: ObservableObject {
             sp.backgroundColor = .clear
 
             let config = HolosConfig.shared
-            let blur = NSVisualEffectView()
+            let blur = MovableVisualEffectView()
             blur.material = config.blurMaterial
             blur.blendingMode = config.blurEnabled ? .behindWindow : .withinWindow
             blur.state = .active
@@ -321,7 +367,7 @@ final class PinManager: ObservableObject {
             sp.backgroundColor = .clear
 
             let config = HolosConfig.shared
-            let blur = NSVisualEffectView()
+            let blur = MovableVisualEffectView()
             blur.material = config.blurMaterial
             blur.blendingMode = config.blurEnabled ? .behindWindow : .withinWindow
             blur.state = .active
@@ -362,6 +408,8 @@ final class PinManager: ObservableObject {
 
         sp.setFrame(start, display: false)
         sp.alphaValue = 0
+        // Below main so the editor reads as stacked under the main window. Right-pane
+        // context switching uses a popover (menu-style pickers do not present reliably on this panel).
         main.addChildWindow(sp, ordered: .below)
 
         NSAnimationContext.runAnimationGroup { ctx in
@@ -419,6 +467,17 @@ final class PinManager: ObservableObject {
 
     // MARK: - Widget panels
 
+    /// Widget-zone UI depends on a live extension process; skip creating panels until it is running.
+    private static func extensionIsRunningForWidget(extensionID: String) -> Bool {
+        guard let ext = ExtensionManager.shared.extensions.first(where: { $0.id == extensionID }) else {
+            return false
+        }
+        let isWidgetExtension = ext.manifest.provides.contains("widget") || ext.widgetSpec != nil
+        if !isWidgetExtension { return true }
+        if case .running = ext.runState { return true }
+        return false
+    }
+
     func refreshWidgetPanels() {
         let mgr = WidgetZoneManager.shared
         for (zoneID, extID) in mgr.assignments {
@@ -427,23 +486,33 @@ final class PinManager: ObservableObject {
             case "below-left-sidebar": shouldShow = isSidebarOpen && isShowing
             default:                   shouldShow = isShowing
             }
-            if shouldShow { showWidgetPanel(zoneID: zoneID, extensionID: extID) }
-            else          { hideWidgetPanel(zoneID: zoneID) }
+            let widgetReady = Self.extensionIsRunningForWidget(extensionID: extID)
+            if shouldShow && widgetReady { showWidgetPanel(zoneID: zoneID, extensionID: extID) }
+            else                          { hideWidgetPanel(zoneID: zoneID) }
         }
         for zoneID in widgetPanels.keys where mgr.assignments[zoneID] == nil {
             hideWidgetPanel(zoneID: zoneID)
         }
     }
 
+    /// Child of main so widget panels track drags in sync (same idea as sidebar child windows).
+    private func attachWidgetPanelToMain(_ w: NSWindow) {
+        guard let main = panel else { return }
+        if w.parent === main { return }
+        if let old = w.parent { old.removeChildWindow(w) }
+        main.addChildWindow(w, ordered: .below)
+    }
+
     private func showWidgetPanel(zoneID: String, extensionID: String) {
         guard let frame = WidgetZoneManager.shared.widgetPanelFrame(for: zoneID) else { return }
         if let existing = widgetPanels[zoneID] {
             existing.setFrame(frame, display: true)
+            attachWidgetPanelToMain(existing)
             return
         }
 
         let config = HolosConfig.shared
-        let blur = NSVisualEffectView()
+        let blur = MovableVisualEffectView()
         blur.material = config.blurMaterial
         blur.blendingMode = config.blurEnabled ? .behindWindow : .withinWindow
         blur.state = .active
@@ -481,6 +550,7 @@ final class PinManager: ObservableObject {
         p.contentView = blur
 
         p.alphaValue = 0
+        attachWidgetPanelToMain(p)
         p.makeKeyAndOrderFront(nil)
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.2
@@ -491,6 +561,9 @@ final class PinManager: ObservableObject {
 
     private func hideWidgetPanel(zoneID: String) {
         guard let p = widgetPanels.removeValue(forKey: zoneID) else { return }
+        if let main = panel, p.parent === main {
+            main.removeChildWindow(p)
+        }
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.15
             p.animator().alphaValue = 0
@@ -506,18 +579,6 @@ final class PinManager: ObservableObject {
             if let frame = WidgetZoneManager.shared.widgetPanelFrame(for: zoneID) {
                 p.setFrame(frame, display: true)
             }
-        }
-    }
-
-    private func applyMinimalResize() {
-        guard let p = panel, p.isVisible else { return }
-        let targetH: CGFloat = isMinimal ? 120 : 500
-        p.minSize = isMinimal ? NSSize(width: 240, height: 100) : NSSize(width: 240, height: 240)
-        let newFrame = NSRect(x: p.frame.minX, y: p.frame.maxY - targetH,
-                              width: p.frame.width, height: targetH)
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.22
-            p.animator().setFrame(newFrame, display: true)
         }
     }
 

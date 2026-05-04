@@ -2,13 +2,15 @@ import Foundation
 
 // MARK: - Manifest
 
-struct ExtensionManifest: Codable, Identifiable {
+struct ExtensionManifest: Decodable, Identifiable {
     let id: String
     let name: String
     let version: String
     let description: String
     let entry: String
     let provides: [String]
+    /// Declarative SwiftUI widget tree (optional; else `widget.json` in the extension folder).
+    let widget: ExtensionWidgetSpec?
 }
 
 // MARK: - Run state
@@ -33,8 +35,12 @@ final class HolosExtension: ObservableObject, Identifiable {
     let id: String
     let manifest: ExtensionManifest
     let directory: URL
+    /// Resolved from `manifest.widget` or `widget.json` in the extension directory.
+    let widgetSpec: ExtensionWidgetSpec?
 
-    @Published private(set) var runState: ExtensionRunState = .stopped
+    @Published private(set) var runState: ExtensionRunState = .stopped {
+        didSet { PinManager.shared.refreshWidgetPanels() }
+    }
     @Published private(set) var widgetData: [String: String] = [:]
 
     private var process: Process?
@@ -42,9 +48,17 @@ final class HolosExtension: ObservableObject, Identifiable {
     private var stdoutPipe: Pipe?
 
     init(manifest: ExtensionManifest, directory: URL) {
-        self.id        = manifest.id
-        self.manifest  = manifest
-        self.directory = directory
+        self.id         = manifest.id
+        self.manifest   = manifest
+        self.directory  = directory
+        self.widgetSpec  = Self.resolveWidgetSpec(manifest: manifest, directory: directory)
+    }
+
+    private static func resolveWidgetSpec(manifest: ExtensionManifest, directory: URL) -> ExtensionWidgetSpec? {
+        if let w = manifest.widget { return w }
+        let url = directory.appendingPathComponent("widget.json")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(ExtensionWidgetSpec.self, from: data)
     }
 
     var canStart: Bool {

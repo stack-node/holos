@@ -115,6 +115,19 @@ final class FileExplorerState: ObservableObject {
     }
 }
 
+// MARK: - Scroll hint (LazyVStack does not report full content height)
+
+private struct FileExplorerContentTopMinYKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private enum FileExplorerScrollSpace {
+    static let name = "fileExplorerScroll"
+}
+
 // MARK: - View
 
 struct FileExplorerView: View {
@@ -123,16 +136,75 @@ struct FileExplorerView: View {
 
     @ObservedObject private var state = FileExplorerState.shared
     @State private var hoveredURL: URL? = nil
+    @State private var contentTopMinY: CGFloat = 0
+    @State private var viewportHeight: CGFloat = 0
+
+    private var scrollOffset: CGFloat { max(0, -contentTopMinY) }
+
+    /// LazyVStack only lays out visible rows; approximate height for overflow / bottom detection.
+    private var estimatedContentHeight: CGFloat {
+        let rowHeight: CGFloat = 27
+        let verticalPadding: CGFloat = 12
+        return CGFloat(state.visibleItems.count) * rowHeight + verticalPadding
+    }
+
+    private var showScrollUpHint: Bool {
+        guard viewportHeight > 1 else { return false }
+        return estimatedContentHeight > viewportHeight + 2 && scrollOffset > 8
+    }
+
+    private var showScrollDownHint: Bool {
+        guard viewportHeight > 1 else { return false }
+        return estimatedContentHeight > viewportHeight + 2
+            && scrollOffset + viewportHeight < estimatedContentHeight - 8
+    }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(state.visibleItems) { item in
-                    row(item: item)
+        GeometryReader { outer in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(state.visibleItems) { item in
+                        row(item: item)
+                    }
+                    VerticalScrollBarSuppressor()
+                        .frame(width: 0, height: 0)
                 }
+                .padding(.vertical, 6)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: FileExplorerContentTopMinYKey.self,
+                            value: geo.frame(in: .named(FileExplorerScrollSpace.name)).minY
+                        )
+                    }
+                )
             }
-            .padding(.vertical, 6)
+            .coordinateSpace(name: FileExplorerScrollSpace.name)
+            .scrollIndicators(.hidden)
+            .onPreferenceChange(FileExplorerContentTopMinYKey.self) { contentTopMinY = $0 }
+            .onAppear { viewportHeight = outer.size.height }
+            .onChange(of: outer.size.height) { viewportHeight = $0 }
+            .overlay(alignment: .top) {
+                scrollHintChevron(up: true)
+                    .opacity(showScrollUpHint ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.18), value: showScrollUpHint)
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .bottom) {
+                scrollHintChevron(up: false)
+                    .opacity(showScrollDownHint ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.18), value: showScrollDownHint)
+                    .allowsHitTesting(false)
+            }
         }
+    }
+
+    private func scrollHintChevron(up: Bool) -> some View {
+        Image(systemName: up ? "chevron.compact.up" : "chevron.compact.down")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.28))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 3)
     }
 
     private func row(item: FileItem) -> some View {

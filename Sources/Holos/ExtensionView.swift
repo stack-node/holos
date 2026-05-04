@@ -16,39 +16,71 @@ private struct WindowDragExclusion: NSViewRepresentable {
 
 struct ExtensionListView: View {
     @ObservedObject private var manager = ExtensionManager.shared
+    @State private var selectedTab = "Installed"
+
+    private let tabs = ["Installed", "Browse"]
 
     var body: some View {
         VStack(spacing: 0) {
             Spacer().frame(height: 52)
 
-            HStack {
-                Text("Extensions")
-                    .font(.system(.callout, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.7))
-                Spacer()
-                Button { manager.scan() } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.35))
-                }
-                .buttonStyle(.borderless)
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
-
-            if manager.extensions.isEmpty {
-                emptyState
-            } else {
-                ScrollView {
-                    VStack(spacing: 6) {
-                        ForEach(manager.extensions) { ext in
-                            ExtensionRow(ext: ext)
+            ZStack {
+                PillTabStrip(tabs: tabs, selection: $selectedTab)
+                HStack {
+                    Spacer(minLength: 0)
+                    if selectedTab == "Installed" {
+                        Button { manager.scan() } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.white.opacity(0.35))
                         }
+                        .buttonStyle(.borderless)
                     }
-                    .padding(.horizontal, 12)
+                }
+            }
+            .padding(.horizontal, 46)
+            .padding(.top, 10)
+            .padding(.bottom, 10)
+
+            Group {
+                if selectedTab == "Installed" {
+                    installedContent
+                } else {
+                    browsePlaceholder
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder private var installedContent: some View {
+        if manager.extensions.isEmpty {
+            emptyState
+        } else {
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(manager.extensions) { ext in
+                        ExtensionRow(ext: ext)
+                    }
+                }
+                .padding(.horizontal, 12)
+            }
+        }
+    }
+
+    private var browsePlaceholder: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "globe")
+                .font(.system(size: 36, weight: .light))
+                .foregroundStyle(Color(red: 0.40, green: 0.85, blue: 0.85).opacity(0.5))
+            Text("Browse")
+                .font(.system(.title3, weight: .medium))
+                .foregroundStyle(.white.opacity(0.35))
+            Text("Coming soon")
+                .font(.system(.caption))
+                .foregroundStyle(.white.opacity(0.2))
+        }
+        .padding(.top, 52)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
@@ -176,110 +208,273 @@ struct ExtensionRow: View {
 struct ExtensionWidgetView: View {
     @ObservedObject var ext: HolosExtension
 
+    private var isWidgetExtension: Bool {
+        ext.manifest.provides.contains("widget") || ext.widgetSpec != nil
+    }
+
+    private var widgetExtensionMayShowContent: Bool {
+        guard isWidgetExtension else { return true }
+        if case .running = ext.runState { return true }
+        return false
+    }
+
     var body: some View {
-        switch ext.manifest.id {
-        case "music": MusicExtensionWidget(ext: ext)
-        default:      GenericExtensionWidget(ext: ext)
+        if !widgetExtensionMayShowContent {
+            EmptyView()
+        } else if let spec = ext.widgetSpec {
+            DeclarativeExtensionWidget(ext: ext, spec: spec)
+        } else if ext.manifest.provides.contains("widget") {
+            GenericExtensionWidget(ext: ext)
+        } else {
+            EmptyView()
         }
     }
 }
 
-// Music renderer
-private struct MusicExtensionWidget: View {
-    @ObservedObject var ext: HolosExtension
+// MARK: - Declarative JSON widget
 
-    private var state:     String { ext.widgetData["state"]  ?? "stopped" }
-    private var track:     String { ext.widgetData["track"]  ?? "" }
-    private var artist:    String { ext.widgetData["artist"] ?? "" }
-    private var isPlaying: Bool   { state == "playing" }
+private struct DeclarativeExtensionWidget: View {
+    @ObservedObject var ext: HolosExtension
+    let spec: ExtensionWidgetSpec
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 5) {
-                Image(systemName: "music.note")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Color(red: 0.95, green: 0.35, blue: 0.55).opacity(0.75))
-                Text("MUSIC")
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.3))
-                Spacer()
-            }
-            .padding(.horizontal, 10)
-
-            if track.isEmpty {
-                Text("Nothing playing")
-                    .font(.system(.caption2))
-                    .foregroundStyle(.white.opacity(0.22))
-                    .padding(.horizontal, 10)
+        Group {
+            if spec.version == 1 {
+                WidgetNodeView(ext: ext, node: spec.root)
             } else {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(track)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .lineLimit(1)
-                    Text(artist)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.42))
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 10)
-
-                HStack(spacing: 0) {
-                    mediaBtn("backward.end.fill") { ext.sendCommand("previous") }
-                    mediaBtn(isPlaying ? "pause.fill" : "play.fill") { ext.sendCommand("play_pause") }
-                    mediaBtn("forward.end.fill")  { ext.sendCommand("next") }
-                }
-                .padding(.horizontal, 6)
+                Text("Unsupported widget schema version \(spec.version)")
+                    .font(.system(.caption2))
+                    .foregroundStyle(.white.opacity(0.45))
             }
         }
         .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.white.opacity(0.04))
-                .overlay(RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.5)
+                )
         )
         .padding(.horizontal, 8)
     }
+}
 
-    private func mediaBtn(_ icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.45))
-                .frame(maxWidth: .infinity, minHeight: 22)
-                .contentShape(Rectangle())
+/// Renders one `WidgetNode` and recurses through children (concrete `View` type avoids opaque recursion issues).
+private struct WidgetNodeView: View {
+    @ObservedObject var ext: HolosExtension
+    let node: WidgetNode
+
+    var body: some View {
+        switch node {
+        case .vstack(let s):
+            let align = Self.horizontalAlignment(s.horizontalAlignment)
+            VStack(alignment: align, spacing: CGFloat(s.spacing ?? 0)) {
+                ForEach(s.children.indices, id: \.self) { i in
+                    WidgetNodeView(ext: ext, node: s.children[i])
+                }
+            }
+            .modifier(HorizontalPad(value: s.horizontalPadding))
+
+        case .hstack(let s):
+            let align = Self.verticalAlignment(s.verticalAlignment)
+            HStack(alignment: align, spacing: CGFloat(s.spacing ?? 0)) {
+                ForEach(s.children.indices, id: \.self) { i in
+                    WidgetNodeView(ext: ext, node: s.children[i])
+                }
+            }
+            .modifier(HorizontalPad(value: s.horizontalPadding))
+
+        case .text(let t):
+            textView(t)
+
+        case .symbol(let s):
+            Image(systemName: s.systemName)
+                .font(Self.symbolFont(s))
+                .foregroundStyle(Self.symbolForeground(s))
+                .modifier(HorizontalPad(value: s.horizontalPadding))
+
+        case .button(let b):
+            Button {
+                ext.sendCommand(b.command)
+            } label: {
+                let iconName = Self.resolvedIcon(b, data: ext.widgetData)
+                Group {
+                    if b.fillWidth == true {
+                        Image(systemName: iconName)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.white.opacity(0.45))
+                            .frame(maxWidth: .infinity, minHeight: 22)
+                            .contentShape(Rectangle())
+                    } else {
+                        Image(systemName: iconName)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.white.opacity(0.45))
+                            .frame(minHeight: 22)
+                            .contentShape(Rectangle())
+                    }
+                }
+            }
+            .buttonStyle(.borderless)
+            .modifier(HorizontalPad(value: b.horizontalPadding))
+
+        case .spacer(let s):
+            Spacer(minLength: CGFloat(s.minLength ?? 0))
+
+        case .whenEmpty(let w):
+            let empty = (ext.widgetData[w.binding] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            Group {
+                if empty {
+                    ForEach(w.whenEmpty.indices, id: \.self) { i in
+                        WidgetNodeView(ext: ext, node: w.whenEmpty[i])
+                    }
+                } else {
+                    ForEach(w.elseNodes.indices, id: \.self) { i in
+                        WidgetNodeView(ext: ext, node: w.elseNodes[i])
+                    }
+                }
+            }
         }
-        .buttonStyle(.borderless)
+    }
+
+    @ViewBuilder
+    private func textView(_ t: WidgetText) -> some View {
+        let base = Text(resolvedText(t))
+            .font(Self.textFont(t))
+            .foregroundStyle(Self.foregroundStyle(opacity: t.foregroundOpacity ?? 0.85))
+        if let lim = t.lineLimit, lim > 0 {
+            base.lineLimit(lim).modifier(HorizontalPad(value: t.horizontalPadding))
+        } else {
+            base.modifier(HorizontalPad(value: t.horizontalPadding))
+        }
+    }
+
+    private func resolvedText(_ t: WidgetText) -> String {
+        if let b = t.binding {
+            return ext.widgetData[b] ?? ""
+        }
+        return t.text ?? ""
+    }
+
+    private static func textFont(_ t: WidgetText) -> Font {
+        if let name = t.textStyle?.lowercased() {
+            switch name {
+            case "caption2": return .system(.caption2)
+            case "caption":  return .system(.caption)
+            case "callout":  return .system(.callout)
+            case "body":     return .system(.body)
+            default:         break
+            }
+        }
+        let size = CGFloat(t.fontSize ?? 11)
+        let w = fontWeight(t.fontWeight)
+        switch t.design?.lowercased() {
+        case "monospaced":
+            return .system(size: size, weight: w, design: .monospaced)
+        default:
+            return .system(size: size, weight: w)
+        }
+    }
+
+    private static func fontWeight(_ raw: String?) -> Font.Weight {
+        switch raw?.lowercased() {
+        case "semibold": return .semibold
+        case "medium":   return .medium
+        case "bold":     return .bold
+        case "light":    return .light
+        default:         return .regular
+        }
+    }
+
+    private static func symbolFont(_ s: WidgetSymbol) -> Font {
+        let size = CGFloat(s.fontSize ?? 11)
+        return .system(size: size, weight: fontWeight(s.fontWeight))
+    }
+
+    private static func symbolForeground(_ s: WidgetSymbol) -> Color {
+        let o = CGFloat(s.foregroundOpacity ?? 1)
+        if let rgb = s.foregroundRGB, rgb.count == 3 {
+            return Color(red: rgb[0], green: rgb[1], blue: rgb[2]).opacity(o)
+        }
+        return Color.white.opacity(o)
+    }
+
+    private static func foregroundStyle(opacity: Double) -> Color {
+        .white.opacity(CGFloat(opacity))
+    }
+
+    private static func resolvedIcon(_ b: WidgetButton, data: [String: String]) -> String {
+        if let when = b.iconWhen,
+           (data[when.binding] ?? "") == when.equals {
+            return when.icon
+        }
+        return b.icon
+    }
+
+    private static func horizontalAlignment(_ raw: String?) -> HorizontalAlignment {
+        switch raw?.lowercased() {
+        case "center":   return .center
+        case "trailing": return .trailing
+        default:         return .leading
+        }
+    }
+
+    private static func verticalAlignment(_ raw: String?) -> VerticalAlignment {
+        switch raw?.lowercased() {
+        case "top":      return .top
+        case "bottom":   return .bottom
+        default:         return .center
+        }
     }
 }
 
-// Generic fallback renderer
+private struct HorizontalPad: ViewModifier {
+    let value: Double?
+    func body(content: Content) -> some View {
+        if let v = value {
+            content.padding(.horizontal, CGFloat(v))
+        } else {
+            content
+        }
+    }
+}
+
+// Generic fallback renderer (no `widget` in manifest / widget.json)
 private struct GenericExtensionWidget: View {
     @ObservedObject var ext: HolosExtension
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(ext.manifest.name.uppercased())
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.3))
-                .padding(.horizontal, 10)
-            ForEach(ext.widgetData.keys.sorted(), id: \.self) { key in
-                HStack {
-                    Text(key).foregroundStyle(.white.opacity(0.4))
-                    Spacer()
-                    Text(ext.widgetData[key] ?? "").foregroundStyle(.white.opacity(0.7))
+        VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(ext.manifest.name.uppercased())
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.3))
+                    .padding(.horizontal, 10)
+                ForEach(ext.widgetData.keys.sorted(), id: \.self) { key in
+                    HStack {
+                        Text(key).foregroundStyle(.white.opacity(0.4))
+                        Spacer()
+                        Text(ext.widgetData[key] ?? "").foregroundStyle(.white.opacity(0.7))
+                    }
+                    .font(.system(.caption2, design: .monospaced))
+                    .padding(.horizontal, 10)
                 }
-                .font(.system(.caption2, design: .monospaced))
-                .padding(.horizontal, 10)
             }
+            Text("Add a \"widget\" object to manifest.json or ship widget.json for a custom layout.")
+                .font(.system(size: 9))
+                .foregroundStyle(.white.opacity(0.2))
+                .padding(.horizontal, 10)
+                .padding(.top, 2)
         }
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.white.opacity(0.04))
-                .overlay(RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.5)
+                )
         )
         .padding(.horizontal, 8)
     }
@@ -312,12 +507,11 @@ struct WidgetPanelContentView: View {
                         }
                         .onEnded { _ in
                             if isDragging {
-                                let placed = WidgetZoneManager.shared.commit(
+                                _ = WidgetZoneManager.shared.commit(
                                     extensionID: extensionID,
                                     at: NSEvent.mouseLocation,
                                     sourceZone: zoneID
                                 )
-                                if !placed { WidgetZoneManager.shared.removeAssignment(for: zoneID) }
                             }
                             isDragging = false
                             WidgetDragState.shared.endDrag()

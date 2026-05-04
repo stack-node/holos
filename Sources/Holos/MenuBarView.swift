@@ -8,17 +8,15 @@ struct MenuBarView: View {
     @ObservedObject private var chat       = ChatClient.shared
     @ObservedObject private var config     = HolosConfig.shared
     @ObservedObject private var pinManager = PinManager.shared
-    @ObservedObject private var settings   = Settings.shared
     @State private var inputText = ""
     @State private var edgePhase: CGFloat = 0
     @State private var isHoveringLeft   = false
     @State private var showingLog       = false
     @State private var showingAppearance = false
-    @State private var showingModels    = false
     @ObservedObject private var rightState = RightSidebarState.shared
     var body: some View {
         mainPanel
-        .frame(minWidth: 240, idealWidth: 380, minHeight: 240, idealHeight: 500)
+        .frame(minWidth: 240, idealWidth: 380, idealHeight: 500)
         .ignoresSafeArea(.all, edges: .top)
         .background(
             ZStack {
@@ -67,48 +65,11 @@ struct MenuBarView: View {
                 if let g = nav.globalTab {
                     globalPlaceholderPage(for: g)
                 } else if nav.selectedTab == "Chats" {
-                    if pinManager.isMinimal {
-                        minimalMessagesOverlay
-                    } else {
-                        messagesArea
-                    }
+                    messagesArea
                     inputSection
                 } else {
                     placeholderPage(for: nav.selectedTab)
                 }
-            }
-
-            // Model badge — top center, tappable, opens model selector
-            if !pinManager.isMinimal {
-                Button { showingModels.toggle() } label: {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(statusColor)
-                            .frame(width: 5, height: 5)
-                            .shadow(color: statusColor.opacity(0.8), radius: 3)
-                        Text(modelDisplayName)
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.6))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule()
-                            .fill(Color.white.opacity(0.05))
-                            .overlay(Capsule().strokeBorder(Color.white.opacity(0.1), lineWidth: 0.5))
-                    )
-                }
-                .buttonStyle(.borderless)
-                .popover(isPresented: $showingModels, arrowEdge: .bottom) {
-                    ModelSelectorView()
-                        .frame(width: 280)
-                        .preferredColorScheme(.dark)
-                }
-                .padding(.top, 10)
-                .padding(.horizontal, 44)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
 
             // Left strip: all hover-only controls
@@ -116,10 +77,6 @@ struct MenuBarView: View {
                 Color.clear
                 if isHoveringLeft || showingLog || showingAppearance {
                     VStack(spacing: 16) {
-                        iconButton(pinManager.isMinimal ? "rectangle.expand.vertical" : "rectangle.compress.vertical",
-                                   active: pinManager.isMinimal) {
-                            pinManager.isMinimal.toggle()
-                        }
                         iconButton(pinManager.isPinned ? "pin.fill" : "pin",
                                    active: pinManager.isPinned) {
                             pinManager.isPinned.toggle()
@@ -154,8 +111,13 @@ struct MenuBarView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
+            // AppKit-backed strip: reliable window drag (placed under sidebar buttons; center passes through Spacer).
+            WindowTitleBarDragArea()
+                .frame(height: 40)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
 // Sidebar toggles — topmost layer, receive taps
-            if !pinManager.isMinimal {
+            HStack(alignment: .top) {
                 Button { pinManager.toggleSidebar() } label: {
                     Image(systemName: "sidebar.left")
                         .font(.system(size: 13, weight: .regular))
@@ -167,9 +129,9 @@ struct MenuBarView: View {
                         )
                 }
                 .buttonStyle(.borderless)
-                .padding(.top, 10)
                 .padding(.leading, 10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+                Spacer().allowsHitTesting(false)
 
                 Button { pinManager.toggleRightSidebar() } label: {
                     Image(systemName: "sidebar.right")
@@ -182,10 +144,10 @@ struct MenuBarView: View {
                         )
                 }
                 .buttonStyle(.borderless)
-                .padding(.top, 10)
                 .padding(.trailing, 10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             }
+            .padding(.top, 10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
     }
 
@@ -297,26 +259,39 @@ struct MenuBarView: View {
 
     // MARK: Placeholder pages
 
+    private func placeholderTabTitle(for tab: String) -> String {
+        switch tab {
+        case "soundMap":   return "Map"
+        case "soundMixer": return "Mixer"
+        default:           return tab
+        }
+    }
+
     private func placeholderPage(for tab: String) -> some View {
         if tab == "Settings" {
             return AnyView(SettingsView().frame(maxWidth: .infinity, maxHeight: .infinity))
         }
         let meta: (icon: String, color: Color) = {
             switch tab {
-            case "Models":      return ("cube",                                Color(red: 0.5, green: 0.4, blue: 1.0))
-            case "Prompts":     return ("doc.text",                            Color(red: 0.3, green: 0.7, blue: 0.9))
-            case "Tools":       return ("wrench.and.screwdriver",              Color(red: 0.9, green: 0.6, blue: 0.2))
-            case "Knowledge":   return ("cylinder.split.1x2",                  Color(red: 0.3, green: 0.8, blue: 0.5))
-            case "MCP Servers": return ("point.3.connected.trianglepath.dotted",Color(red: 0.8, green: 0.3, blue: 0.7))
-            default:            return ("square.dashed",                       Color.white)
+            case "Models":      return ("cube",                                        Color(red: 0.55, green: 0.40, blue: 0.90))
+            case "Tools":       return ("wrench.and.screwdriver",                      Color(red: 1.00, green: 0.65, blue: 0.30))
+            case "Knowledge":   return ("cylinder.split.1x2",                          Color(red: 0.90, green: 0.40, blue: 0.50))
+            case "Connections": return ("point.3.connected.trianglepath.dotted",       Color(red: 0.40, green: 0.85, blue: 0.85))
+            case "Skills":      return ("sparkles",                                    Color(red: 0.95, green: 0.80, blue: 0.35))
+            case "Rules":       return ("list.bullet.rectangle",                       Color(red: 0.55, green: 0.85, blue: 0.55))
+            case "Map":         return ("point.3.filled.connected.trianglepath.dotted",Color(red: 0.65, green: 0.50, blue: 0.95))
+            case "soundMap":    return ("point.3.filled.connected.trianglepath.dotted",Color(red: 0.65, green: 0.50, blue: 0.95))
+            case "soundMixer":  return ("slider.horizontal.3",                         Color(red: 0.95, green: 0.42, blue: 0.52))
+            default:            return ("square.dashed",                               Color.white)
             }
         }()
+        let title = placeholderTabTitle(for: tab)
         return AnyView(
             VStack(spacing: 14) {
                 Image(systemName: meta.icon)
                     .font(.system(size: 36, weight: .light))
                     .foregroundStyle(meta.color.opacity(0.5))
-                Text(tab)
+                Text(title)
                     .font(.system(.title3, weight: .medium))
                     .foregroundStyle(.white.opacity(0.35))
                 Text("Coming soon")
@@ -334,6 +309,7 @@ struct MenuBarView: View {
         }
         let meta: (icon: String, color: Color) = {
             switch tab {
+            case "Modules":  return ("square.stack.3d.up.fill", Color(red: 0.45, green: 0.82, blue: 0.92))
             case "Settings": return ("gearshape.2", Color(red: 0.70, green: 0.70, blue: 0.75))
             default:         return ("square.dashed", Color.white)
             }
@@ -353,25 +329,6 @@ struct MenuBarView: View {
             .padding(.top, 52)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         )
-    }
-
-    // MARK: Minimal overlay (last 3 bubbles, no scrollview)
-
-    private var minimalMessagesOverlay: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            let recent = Array(chat.messages.suffix(3))
-            ForEach(recent) { msg in
-                GlassMessageBubble(message: msg)
-            }
-            if chat.isStreaming && !chat.streamingResponse.isEmpty {
-                GlassMessageBubble(
-                    message: ChatMessage(role: "assistant", content: chat.streamingResponse)
-                )
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
     }
 
     // MARK: Messages
@@ -483,22 +440,6 @@ struct MenuBarView: View {
         guard !trimmed.isEmpty, server.isRunning else { return }
         inputText = ""
         chat.send(trimmed)
-    }
-
-
-    private var modelDisplayName: String {
-        let raw = settings.modelPath
-        guard !raw.isEmpty else { return "no model" }
-        return URL(fileURLWithPath: raw).deletingPathExtension().lastPathComponent
-    }
-
-    private var statusColor: Color {
-        switch server.state {
-        case .stopped:  return .white.opacity(0.25)
-        case .starting: return .yellow
-        case .running:  return Color(red: 0.15, green: 1, blue: 0.45)
-        case .failed:   return .red
-        }
     }
 }
 
@@ -627,6 +568,34 @@ struct GlassMessageBubble: View {
     }
 }
 
+// MARK: - Pill tab strip (Settings, Extensions, …)
+
+struct PillTabStrip: View {
+    let tabs: [String]
+    @Binding var selection: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(tabs, id: \.self) { tab in
+                Button {
+                    selection = tab
+                } label: {
+                    Text(tab)
+                        .font(.system(.caption, weight: selection == tab ? .semibold : .regular))
+                        .foregroundStyle(selection == tab ? .white.opacity(0.9) : .white.opacity(0.4))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule()
+                                .fill(selection == tab ? Color.white.opacity(0.1) : Color.clear)
+                        )
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+    }
+}
+
 // MARK: - Settings window
 
 struct SettingsView: View {
@@ -637,30 +606,11 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top chrome clearance + tab bar
-            VStack(spacing: 0) {
-                Spacer().frame(height: 52)
-                HStack(spacing: 4) {
-                    ForEach(tabs, id: \.self) { tab in
-                        Button {
-                            selectedTab = tab
-                        } label: {
-                            Text(tab)
-                                .font(.system(.caption, weight: selectedTab == tab ? .semibold : .regular))
-                                .foregroundStyle(selectedTab == tab ? .white.opacity(0.9) : .white.opacity(0.4))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(
-                                    Capsule()
-                                        .fill(selectedTab == tab ? Color.white.opacity(0.1) : Color.clear)
-                                )
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                }
-                .padding(.horizontal, 12)
+            // Tab bar — same vertical inset as sidebar.left / sidebar.right (mainPanel)
+            PillTabStrip(tabs: tabs, selection: $selectedTab)
+                .padding(.horizontal, 46)
+                .padding(.top, 10)
                 .padding(.bottom, 10)
-            }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -984,112 +934,6 @@ struct LogView: View {
     }
 }
 
-// MARK: - Model selector popover
-
-struct ModelEntry: Identifiable {
-    let id = UUID()
-    var name: String
-    var status: ModelEntryStatus
-    var isActive: Bool
-}
-
-enum ModelEntryStatus {
-    case running, stopped, loading, failed
-
-    var color: Color {
-        switch self {
-        case .running: return Color(red: 0.15, green: 1, blue: 0.45)
-        case .stopped: return .white.opacity(0.25)
-        case .loading: return .yellow
-        case .failed:  return .red
-        }
-    }
-
-    var label: String {
-        switch self {
-        case .running: return "Running"
-        case .stopped: return "Stopped"
-        case .loading: return "Loading"
-        case .failed:  return "Failed"
-        }
-    }
-}
-
-struct ModelSelectorView: View {
-    @ObservedObject private var server   = LlamaServer.shared
-    @ObservedObject private var settings = Settings.shared
-
-    private var models: [ModelEntry] {
-        let active = URL(fileURLWithPath: settings.modelPath)
-            .deletingPathExtension().lastPathComponent
-        let activeStatus: ModelEntryStatus = {
-            switch server.state {
-            case .running:  return .running
-            case .starting: return .loading
-            case .failed:   return .failed
-            case .stopped:  return .stopped
-            }
-        }()
-        return [
-            ModelEntry(name: active.isEmpty ? "No model" : active,
-                       status: activeStatus, isActive: true),
-            ModelEntry(name: "placeholder-model-a", status: .stopped, isActive: false),
-            ModelEntry(name: "placeholder-model-b", status: .stopped, isActive: false),
-        ]
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Models")
-                .font(.system(.caption, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.45))
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 8)
-
-            Divider().opacity(0.15)
-
-            ForEach(models) { model in
-                modelRow(model)
-                Divider().opacity(0.15)
-            }
-        }
-        .padding(.bottom, 4)
-    }
-
-    private func modelRow(_ model: ModelEntry) -> some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(model.status.color)
-                .frame(width: 6, height: 6)
-                .shadow(color: model.status.color.opacity(0.8), radius: 3)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(model.name)
-                    .font(.system(.callout, design: .monospaced))
-                    .foregroundStyle(model.isActive ? .white.opacity(0.9) : .white.opacity(0.5))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text(model.status.label)
-                    .font(.system(.caption2))
-                    .foregroundStyle(model.status.color.opacity(0.8))
-            }
-            Spacer()
-            if !model.isActive {
-                Text("placeholder")
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.25))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.white.opacity(0.06)))
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(model.isActive ? Color.white.opacity(0.04) : Color.clear)
-    }
-}
-
 // MARK: - Navigation state
 
 final class NavigationState: ObservableObject {
@@ -1101,23 +945,78 @@ final class NavigationState: ObservableObject {
 
 // MARK: - Sidebar content
 
-private enum SidebarCategory: String, CaseIterable {
-    case ai    = "AI"
-    case music = "Music"
+private enum SidebarCategory: String, CaseIterable, Hashable {
+    case ai             = "AI"
+    case development    = "Development"
+    case versionControl = "Version Control"
+    case system         = "System"
+    case sound          = "Sound"
+
+    private static let tabOrderDefaultsKey = "holos.sidebarCategoryTabOrder"
+
+    private static var defaultTabOrder: [SidebarCategory] {
+        [.ai, .development, .versionControl, .system, .sound]
+    }
+
+    static func loadSavedTabOrder() -> [SidebarCategory] {
+        guard let raw = UserDefaults.standard.stringArray(forKey: tabOrderDefaultsKey),
+              !raw.isEmpty
+        else { return defaultTabOrder }
+        var seen = Set<String>()
+        var result: [SidebarCategory] = []
+        for s in raw {
+            let normalized = (s == "Music") ? SidebarCategory.sound.rawValue : s
+            guard let c = SidebarCategory(rawValue: normalized), seen.insert(c.rawValue).inserted else { continue }
+            result.append(c)
+        }
+        for c in SidebarCategory.allCases where !seen.contains(c.rawValue) {
+            result.append(c)
+        }
+        return result
+    }
+
+    static func saveTabOrder(_ order: [SidebarCategory]) {
+        UserDefaults.standard.set(order.map(\.rawValue), forKey: tabOrderDefaultsKey)
+    }
 
     var icon: String {
         switch self {
-        case .ai:    return "cpu"
-        case .music: return "music.note"
+        case .ai:             return "cpu"
+        case .development:    return "hammer.fill"
+        case .versionControl: return "arrow.triangle.branch"
+        case .system:         return "gearshape"
+        case .sound:          return "speaker.wave.2.fill"
         }
     }
 
     var color: Color {
         switch self {
-        case .ai:    return Color(red: 0.55, green: 0.40, blue: 0.90)
-        case .music: return Color(red: 0.95, green: 0.35, blue: 0.55)
+        case .ai:             return Color(red: 0.55, green: 0.40, blue: 0.90)
+        case .development:    return Color(red: 0.40, green: 0.72, blue: 1.00)
+        case .versionControl: return Color(red: 0.95, green: 0.52, blue: 0.28)
+        case .system:         return Color(red: 0.45, green: 0.88, blue: 0.58)
+        case .sound:          return Color(red: 0.95, green: 0.35, blue: 0.55)
         }
     }
+}
+
+private enum TabStripCoordinateSpace {
+    static let name = "holos.tabStrip"
+}
+
+private struct TabStripBoundsKey: PreferenceKey {
+    static var defaultValue: [SidebarCategory: CGRect] = [:]
+    static func reduce(value: inout [SidebarCategory: CGRect], nextValue: () -> [SidebarCategory: CGRect]) {
+        for (k, v) in nextValue() { value[k] = v }
+    }
+}
+
+private struct SoundSidebarNavItem: Identifiable {
+    var id: String { tabId }
+    let tabId: String
+    let icon: String
+    let title: String
+    let color: Color
 }
 
 struct SidebarContentView: View {
@@ -1125,118 +1024,191 @@ struct SidebarContentView: View {
     @ObservedObject private var server = LlamaServer.shared
     @ObservedObject private var config = HolosConfig.shared
     @State private var category: SidebarCategory = .ai
+    @State private var categoryOrder  = SidebarCategory.loadSavedTabOrder()
+    @State private var tabStripBounds: [SidebarCategory: CGRect] = [:]
+    @State private var tabCmdDragSourceIndex: Int?
+    @State private var tabCmdDragCategory: SidebarCategory?
+    @State private var tabCmdDragTranslation: CGFloat = 0
+    @State private var tabCmdProposedDropIndex: Int?
+    @State private var lastDragLocationInStrip: CGPoint?
+    @State private var edgeScrollDir: Int = 0
+    @State private var scrollAssistIndex: Int = 0
+    /// From `NSScrollView` clip view — reliable during scroll (unlike SwiftUI preferences).
+    @State private var sidebarNavClipOffsetY: CGFloat = 0
+    @State private var sidebarNavMaxClipOffsetY: CGFloat = 0
+
+    private let tabStripEdgeScrollTimer = Timer.publish(every: 0.11, on: .main, in: .common).autoconnect()
 
     private let aiNavItems: [(icon: String, label: String, color: Color)] = [
-        ("bubble.left.fill",                    "Chats",       Color(red: 0.40, green: 0.70, blue: 1.00)),
-        ("cube",                                "Models",      Color(red: 0.55, green: 0.40, blue: 0.90)),
-        ("doc.text",                            "Prompts",     Color(red: 0.35, green: 0.80, blue: 0.65)),
-        ("wrench.and.screwdriver",              "Tools",       Color(red: 1.00, green: 0.65, blue: 0.30)),
-        ("cylinder.split.1x2",                  "Knowledge",   Color(red: 0.90, green: 0.40, blue: 0.50)),
-        ("point.3.connected.trianglepath.dotted","MCP Servers", Color(red: 0.40, green: 0.85, blue: 0.85)),
-        ("gearshape",                           "Settings",    Color(red: 0.70, green: 0.70, blue: 0.75)),
+        ("bubble.left.fill",                            "Chats",       Color(red: 0.40, green: 0.70, blue: 1.00)),
+        ("cube",                                        "Models",      Color(red: 0.55, green: 0.40, blue: 0.90)),
+        ("wrench.and.screwdriver",                      "Tools",       Color(red: 1.00, green: 0.65, blue: 0.30)),
+        ("cylinder.split.1x2",                          "Knowledge",   Color(red: 0.90, green: 0.40, blue: 0.50)),
+        ("point.3.connected.trianglepath.dotted",       "Connections", Color(red: 0.40, green: 0.85, blue: 0.85)),
+        ("sparkles",                                    "Skills",      Color(red: 0.95, green: 0.80, blue: 0.35)),
+        ("list.bullet.rectangle",                       "Rules",       Color(red: 0.55, green: 0.85, blue: 0.55)),
+        ("point.3.filled.connected.trianglepath.dotted","Map",         Color(red: 0.65, green: 0.50, blue: 0.95)),
+        ("gearshape",                                   "Settings",    Color(red: 0.70, green: 0.70, blue: 0.75)),
     ]
 
     private let globalItems: [(icon: String, label: String, color: Color)] = [
         ("puzzlepiece.extension", "Extensions", Color(red: 0.55, green: 0.75, blue: 1.00)),
+        ("square.stack.3d.up.fill", "Modules", Color(red: 0.45, green: 0.82, blue: 0.92)),
         ("gearshape.2",           "Settings",   Color(red: 0.70, green: 0.70, blue: 0.75)),
     ]
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Category tabs
-            HStack(spacing: 6) {
-                ForEach(SidebarCategory.allCases, id: \.self) { cat in
-                    Button { withAnimation(.easeInOut(duration: 0.18)) { category = cat } } label: {
-                        VStack(spacing: 3) {
-                            Image(systemName: cat.icon)
-                                .font(.system(size: 13, weight: .semibold))
-                            Text(cat.rawValue)
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                        .foregroundStyle(category == cat ? cat.color : .white.opacity(0.35))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7)
-                                .fill(category == cat ? cat.color.opacity(0.15) : Color.clear)
-                        )
-                    }
-                    .buttonStyle(.borderless)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
+    private let soundNavItems: [SoundSidebarNavItem] = [
+        SoundSidebarNavItem(
+            tabId: "soundMap",
+            icon: "point.3.filled.connected.trianglepath.dotted",
+            title: "Map",
+            color: Color(red: 0.65, green: 0.50, blue: 0.95)
+        ),
+        SoundSidebarNavItem(
+            tabId: "soundMixer",
+            icon: "slider.horizontal.3",
+            title: "Mixer",
+            color: Color(red: 0.95, green: 0.42, blue: 0.52)
+        ),
+    ]
 
-            Divider().opacity(0.12)
+    private let sidebarNavScrollEdgeEpsilon: CGFloat = 4
+
+    private var sidebarNavCanScroll: Bool {
+        sidebarNavMaxClipOffsetY > sidebarNavScrollEdgeEpsilon
+    }
+
+    private var sidebarNavShowUpHint: Bool {
+        sidebarNavCanScroll && sidebarNavClipOffsetY > sidebarNavScrollEdgeEpsilon
+    }
+
+    private var sidebarNavShowDownHint: Bool {
+        sidebarNavCanScroll && sidebarNavClipOffsetY < sidebarNavMaxClipOffsetY - sidebarNavScrollEdgeEpsilon
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            LeftSidebarResizeHandle()
+                .frame(width: 6)
+
+            VStack(alignment: .leading, spacing: 0) {
+                // Category tabs (horizontal scroll only — Cmd-drag to reorder, order persisted)
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 4) {
+                            ForEach(categoryTabsForStrip, id: \.self) { cat in
+                                let modelIndex = categoryOrder.firstIndex(of: cat) ?? 0
+                                sidebarCategoryTab(cat: cat, modelIndex: modelIndex)
+                                    .id(cat)
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .coordinateSpace(name: TabStripCoordinateSpace.name)
+                    }
+                    .onPreferenceChange(TabStripBoundsKey.self) { tabStripBounds = $0 }
+                    .scrollDisabled(tabCmdDragSourceIndex != nil)
+                    .onReceive(tabStripEdgeScrollTimer) { _ in
+                        guard tabCmdDragSourceIndex != nil else { return }
+                        updateTabStripEdgeScrollIntent()
+                        if let x = lastDragLocationInStrip?.x {
+                            proposeDropIfNeeded(pointerX: x)
+                        }
+                        guard edgeScrollDir != 0 else { return }
+                        let strip = categoryTabsForStrip
+                        let n = strip.count
+                        guard n > 1 else { return }
+                        if edgeScrollDir < 0 {
+                            scrollAssistIndex = max(0, scrollAssistIndex - 1)
+                            let cat = strip[scrollAssistIndex]
+                            withAnimation(.linear(duration: 0.1)) { proxy.scrollTo(cat, anchor: .leading) }
+                        } else {
+                            scrollAssistIndex = min(n - 1, scrollAssistIndex + 1)
+                            let cat = strip[scrollAssistIndex]
+                            withAnimation(.linear(duration: 0.1)) { proxy.scrollTo(cat, anchor: .trailing) }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 12)
                 .padding(.bottom, 8)
 
-            // Nav items per category
-            if category == .ai {
-                ForEach(aiNavItems, id: \.label) { item in
-                    sidebarRow(icon: item.icon, label: item.label, color: item.color,
-                               isSelected: nav.selectedTab == item.label) {
-                        nav.selectedTab = item.label
+                Divider().opacity(0.12)
+                    .padding(.bottom, 8)
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Nav items per category
+                        if category == .ai {
+                            ForEach(aiNavItems, id: \.label) { item in
+                                sidebarRow(icon: item.icon, label: item.label, color: item.color,
+                                           isSelected: nav.globalTab == nil && nav.selectedTab == item.label) {
+                                    nav.globalTab = nil
+                                    nav.selectedTab = item.label
+                                }
+                            }
+                        } else if category == .sound {
+                            ForEach(soundNavItems) { item in
+                                sidebarRow(icon: item.icon, label: item.title, color: item.color,
+                                           isSelected: nav.globalTab == nil && nav.selectedTab == item.tabId) {
+                                    nav.globalTab = nil
+                                    nav.selectedTab = item.tabId
+                                }
+                            }
+                        } else {
+                            VStack(spacing: 12) {
+                                Image(systemName: category.icon)
+                                    .font(.system(size: 28))
+                                    .foregroundStyle(category.color.opacity(0.5))
+                                Text(category.rawValue)
+                                    .font(.system(.callout, weight: .medium))
+                                    .foregroundStyle(.white.opacity(0.5))
+                                Text("Coming soon")
+                                    .font(.system(.caption))
+                                    .foregroundStyle(.white.opacity(0.25))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 40)
+                        }
+
+                        MacScrollViewChrome(
+                            clipOffsetY: $sidebarNavClipOffsetY,
+                            maxClipOffsetY: $sidebarNavMaxClipOffsetY
+                        )
+                        .frame(width: 0, height: 0)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                .scrollIndicators(.hidden)
+                .overlay(alignment: .top) {
+                    sidebarScrollHintChevron(up: true)
+                        .opacity(sidebarNavShowUpHint ? 1 : 0)
+                        .animation(.easeInOut(duration: 0.18), value: sidebarNavShowUpHint)
+                        .allowsHitTesting(false)
+                }
+                .overlay(alignment: .bottom) {
+                    sidebarScrollHintChevron(up: false)
+                        .opacity(sidebarNavShowDownHint ? 1 : 0)
+                        .animation(.easeInOut(duration: 0.18), value: sidebarNavShowDownHint)
+                        .allowsHitTesting(false)
+                }
+                .frame(minHeight: 0, maxHeight: .infinity)
+
+                Divider().opacity(0.12)
+                    .padding(.top, 8)
+
+                // Global items
+                VStack(spacing: 0) {
+                    ForEach(globalItems, id: \.label) { item in
+                        sidebarRow(icon: item.icon, label: item.label, color: item.color,
+                                   isSelected: nav.globalTab == item.label) {
+                            nav.globalTab = item.label
+                        }
                     }
                 }
-            } else {
-                VStack(spacing: 12) {
-                    Image(systemName: "music.note.list")
-                        .font(.system(size: 28))
-                        .foregroundStyle(SidebarCategory.music.color.opacity(0.5))
-                    Text("Music")
-                        .font(.system(.callout, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.5))
-                    Text("Coming soon")
-                        .font(.system(.caption))
-                        .foregroundStyle(.white.opacity(0.25))
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 40)
+                .padding(.bottom, 10)
             }
-
-            Spacer()
-
-            Divider().opacity(0.12)
-                .padding(.top, 8)
-
-            // Global items
-            ForEach(globalItems, id: \.label) { item in
-                sidebarRow(icon: item.icon, label: item.label, color: item.color,
-                           isSelected: nav.globalTab == item.label) {
-                    nav.globalTab = nav.globalTab == item.label ? nil : item.label
-                }
-            }
-
-            Divider().opacity(0.10)
-
-            // Server + power controls
-            HStack(spacing: 0) {
-                Button {
-                    server.isRunning ? server.stop() : server.start()
-                } label: {
-                    Image(systemName: server.isRunning ? "stop.circle" : "play.circle")
-                        .font(.system(size: 15))
-                        .foregroundStyle(server.isRunning ? Color.red.opacity(0.75) : Color.green.opacity(0.75))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.borderless)
-
-                Divider().opacity(0.12).frame(height: 18)
-
-                Button { NSApp.terminate(nil) } label: {
-                    Image(systemName: "power")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.white.opacity(0.3))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.borderless)
-            }
-            .frame(height: 38)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
             Group {
                 if config.blurEnabled {
@@ -1252,6 +1224,166 @@ struct SidebarContentView: View {
                 .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.8)
         )
         .preferredColorScheme(.dark)
+    }
+
+    /// Live preview order while ⌘-dragging (neighbors animate via `withAnimation` on `tabCmdProposedDropIndex`).
+    private var categoryTabsForStrip: [SidebarCategory] {
+        guard let from = tabCmdDragSourceIndex,
+              let to = tabCmdProposedDropIndex,
+              from != to
+        else { return categoryOrder }
+        return Self.applyMove(categoryOrder, from: from, to: to)
+    }
+
+    private static func applyMove(_ order: [SidebarCategory], from: Int, to: Int) -> [SidebarCategory] {
+        guard from >= 0, from < order.count, to >= 0, to < order.count, from != to else { return order }
+        var a = order
+        let item = a.remove(at: from)
+        a.insert(item, at: min(to, a.count))
+        return a
+    }
+
+    /// Final index of the dragged tab after a move, from pointer X in `TabStripCoordinateSpace` and per-tab bounds.
+    private static func finalIndexAfterPointer(
+        pointerX: CGFloat,
+        from: Int,
+        bounds: [SidebarCategory: CGRect],
+        categoryOrder: [SidebarCategory]
+    ) -> Int {
+        guard from >= 0, from < categoryOrder.count else { return 0 }
+        let dragged = categoryOrder[from]
+        let others = categoryOrder.enumerated().compactMap { $0.offset == from ? nil : $0.element }
+        let sortedOthers = others.filter { bounds[$0] != nil }.sorted { bounds[$0]!.minX < bounds[$1]!.minX }
+        guard sortedOthers.count == others.count, !sortedOthers.isEmpty else { return from }
+
+        var insertSlot = sortedOthers.count
+        for (i, c) in sortedOthers.enumerated() {
+            if pointerX < bounds[c]!.midX {
+                insertSlot = i
+                break
+            }
+        }
+
+        var arr = categoryOrder
+        arr.remove(at: from)
+        if insertSlot >= sortedOthers.count {
+            arr.append(dragged)
+        } else {
+            let before = sortedOthers[insertSlot]
+            if let ix = arr.firstIndex(of: before) {
+                arr.insert(dragged, at: ix)
+            } else {
+                arr.append(dragged)
+            }
+        }
+        return arr.firstIndex(of: dragged) ?? from
+    }
+
+    private func proposeDropIfNeeded(pointerX: CGFloat) {
+        guard let from = tabCmdDragSourceIndex else { return }
+        let newTo = Self.finalIndexAfterPointer(
+            pointerX: pointerX,
+            from: from,
+            bounds: tabStripBounds,
+            categoryOrder: categoryOrder
+        )
+        guard newTo != tabCmdProposedDropIndex else { return }
+        withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.82)) {
+            tabCmdProposedDropIndex = newTo
+        }
+    }
+
+    private func updateTabStripEdgeScrollIntent() {
+        guard let sf = PinManager.shared.sidebarPanelFrame else {
+            edgeScrollDir = 0
+            return
+        }
+        let p = NSEvent.mouseLocation
+        let margin: CGFloat = 32
+        if p.x < sf.minX + margin {
+            edgeScrollDir = -1
+        } else if p.x > sf.maxX - margin {
+            edgeScrollDir = 1
+        } else {
+            edgeScrollDir = 0
+        }
+    }
+
+    private func sidebarCategoryTab(cat: SidebarCategory, modelIndex: Int) -> some View {
+        let isDraggingThis = tabCmdDragCategory == cat
+        return VStack(spacing: 3) {
+            Image(systemName: cat.icon)
+                .font(.system(size: 12, weight: .semibold))
+            Text(cat.rawValue)
+                .font(.system(size: 8.5, weight: .semibold))
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 72)
+        }
+        .foregroundStyle(category == cat ? cat.color : .white.opacity(0.35))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(category == cat ? cat.color.opacity(0.15) : Color.clear)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .strokeBorder(category == cat ? cat.color : Color.clear, lineWidth: 0.75)
+                )
+        )
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: TabStripBoundsKey.self,
+                    value: [cat: geo.frame(in: .named(TabStripCoordinateSpace.name))]
+                )
+            }
+        )
+        .fixedSize(horizontal: true, vertical: false)
+        .zIndex(isDraggingThis ? 2 : 0)
+        .offset(x: isDraggingThis ? tabCmdDragTranslation : 0)
+        .opacity(isDraggingThis ? 0.55 : 1)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.18)) { category = cat }
+        }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 6, coordinateSpace: .named(TabStripCoordinateSpace.name))
+                .onChanged { value in
+                    guard NSEvent.modifierFlags.contains(.command) else { return }
+                    if tabCmdDragSourceIndex == nil {
+                        tabCmdDragSourceIndex = modelIndex
+                        tabCmdDragCategory = cat
+                        tabCmdProposedDropIndex = modelIndex
+                        scrollAssistIndex = categoryTabsForStrip.firstIndex(of: cat) ?? modelIndex
+                    }
+                    guard tabCmdDragSourceIndex == modelIndex else { return }
+                    tabCmdDragTranslation = value.translation.width
+                    lastDragLocationInStrip = value.location
+                    proposeDropIfNeeded(pointerX: value.location.x)
+                    updateTabStripEdgeScrollIntent()
+                }
+                .onEnded { _ in
+                    guard tabCmdDragSourceIndex == modelIndex else { return }
+                    let from = tabCmdDragSourceIndex!
+                    let to = tabCmdProposedDropIndex ?? from
+                    defer {
+                        tabCmdDragSourceIndex = nil
+                        tabCmdDragCategory = nil
+                        tabCmdDragTranslation = 0
+                        tabCmdProposedDropIndex = nil
+                        lastDragLocationInStrip = nil
+                        edgeScrollDir = 0
+                    }
+                    guard from != to else { return }
+                    let next = Self.applyMove(categoryOrder, from: from, to: to)
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.88)) {
+                        categoryOrder = next
+                    }
+                    SidebarCategory.saveTabOrder(next)
+                }
+        )
     }
 
     private func sidebarRow(icon: String, label: String, color: Color, isSelected: Bool, action: @escaping () -> Void) -> some View {
@@ -1271,19 +1403,32 @@ struct SidebarContentView: View {
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(isSelected ? Color.white.opacity(0.08) : Color.clear)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(isSelected ? color : Color.clear, lineWidth: 0.75)
+                    )
             )
             .padding(.horizontal, 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
     }
+
+    private func sidebarScrollHintChevron(up: Bool) -> some View {
+        Image(systemName: up ? "chevron.compact.up" : "chevron.compact.down")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.42))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 3)
+    }
 }
 
 // MARK: - Right context
 
-enum RightContext: String, CaseIterable, Identifiable {
+enum RightContext: String, CaseIterable, Identifiable, Hashable {
     case codeEditor
     case textEditor
+    case terminal
 
     var id: String { rawValue }
 
@@ -1291,6 +1436,7 @@ enum RightContext: String, CaseIterable, Identifiable {
         switch self {
         case .codeEditor: return "curlybraces"
         case .textEditor: return "text.alignleft"
+        case .terminal:   return "terminal"
         }
     }
 
@@ -1298,6 +1444,7 @@ enum RightContext: String, CaseIterable, Identifiable {
         switch self {
         case .codeEditor: return "Code Editor"
         case .textEditor: return "Text Editor"
+        case .terminal:   return "Terminal"
         }
     }
 }
@@ -1348,6 +1495,7 @@ struct RightSidebarContentView: View {
         switch rightState.context {
         case .codeEditor: CodeEditorPane()
         case .textEditor: TextEditorPane()
+        case .terminal:   TerminalPane()
         }
     }
 }
@@ -1403,6 +1551,66 @@ final class ResizeHandleNSView: NSView {
         ).origin else { return }
         let delta = screenPoint.x - dragStartScreenX
         PinManager.shared.resizeRightSidebar(to: dragStartWidth + delta)
+    }
+
+    override func mouseUp(with event: NSEvent) {}
+
+    override var intrinsicContentSize: NSSize { NSSize(width: 6, height: NSView.noIntrinsicMetric) }
+}
+
+private struct LeftSidebarResizeHandle: NSViewRepresentable {
+    func makeNSView(context: Context) -> LeftSidebarResizeHandleNSView { LeftSidebarResizeHandleNSView() }
+    func updateNSView(_ nsView: LeftSidebarResizeHandleNSView, context: Context) {}
+}
+
+/// Drag the outer (leading) edge: drag right narrows the sidebar, drag left widens it.
+final class LeftSidebarResizeHandleNSView: NSView {
+    private var dragStartScreenX: CGFloat = 0
+    private var dragStartWidth: CGFloat = 0
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingArea.map { removeTrackingArea($0) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self, userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .resizeLeftRight)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        NSCursor.resizeLeftRight.push()
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.08).cgColor
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        NSCursor.pop()
+        layer?.backgroundColor = .clear
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let screenPoint = window?.convertToScreen(
+            NSRect(origin: event.locationInWindow, size: .zero)
+        ).origin else { return }
+        dragStartScreenX = screenPoint.x
+        dragStartWidth   = PinManager.shared.sidebarW
+        wantsLayer = true
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let screenPoint = window?.convertToScreen(
+            NSRect(origin: event.locationInWindow, size: .zero)
+        ).origin else { return }
+        let delta = screenPoint.x - dragStartScreenX
+        PinManager.shared.resizeLeftSidebar(to: dragStartWidth - delta)
     }
 
     override func mouseUp(with event: NSEvent) {}
@@ -1504,56 +1712,55 @@ private struct CodeEditorPane: View {
 
 private struct RightContextPickerButton: View {
     @ObservedObject private var rightState = RightSidebarState.shared
-    @State private var showing = false
+    @State private var showingPicker = false
 
     var body: some View {
-        Button { showing.toggle() } label: {
+        Button {
+            showingPicker.toggle()
+        } label: {
             ZStack {
                 RoundedRectangle(cornerRadius: 7)
-                    .fill(showing ? Color.white.opacity(0.12) : Color.white.opacity(0.08))
+                    .fill(Color.white.opacity(0.08))
                     .frame(width: 28, height: 28)
                 Image(systemName: rightState.context.icon)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.white.opacity(0.7))
             }
         }
-        .buttonStyle(.borderless)
-        .popover(isPresented: $showing, arrowEdge: .top) {
-            VStack(spacing: 0) {
+        .buttonStyle(.plain)
+        .frame(width: 28, height: 28)
+        .popover(isPresented: $showingPicker, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 0) {
                 ForEach(RightContext.allCases) { ctx in
                     Button {
                         rightState.context = ctx
-                        showing = false
+                        showingPicker = false
                     } label: {
                         HStack(spacing: 10) {
                             Image(systemName: ctx.icon)
-                                .font(.system(size: 12))
-                                .foregroundStyle(rightState.context == ctx
-                                    ? Color(red: 0.4, green: 0.85, blue: 1.0)
-                                    : .white.opacity(0.55))
-                                .frame(width: 16)
+                                .font(.system(size: 13))
+                                .foregroundStyle(ctx == rightState.context ? .white.opacity(0.9) : .white.opacity(0.45))
+                                .frame(width: 18)
                             Text(ctx.label)
                                 .font(.system(.callout))
-                                .foregroundStyle(rightState.context == ctx
-                                    ? .white.opacity(0.9)
-                                    : .white.opacity(0.55))
-                            Spacer()
-                            if rightState.context == ctx {
+                                .foregroundStyle(ctx == rightState.context ? .white.opacity(0.9) : .white.opacity(0.55))
+                            Spacer(minLength: 8)
+                            if ctx == rightState.context {
                                 Image(systemName: "checkmark")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(Color(red: 0.4, green: 0.85, blue: 1.0))
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.5))
                             }
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 9)
-                        .background(rightState.context == ctx ? Color.white.opacity(0.05) : Color.clear)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(.borderless)
-                    if ctx != RightContext.allCases.last { Divider().opacity(0.12) }
+                    .buttonStyle(.plain)
                 }
             }
-            .frame(minWidth: 160)
+            .padding(.vertical, 4)
+            .frame(minWidth: 200)
             .preferredColorScheme(.dark)
         }
     }
@@ -1590,5 +1797,92 @@ private struct TextEditorPane: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .preferredColorScheme(.dark)
+    }
+}
+
+// MARK: - Terminal pane
+
+private struct TerminalPane: View {
+    @ObservedObject private var rightState = RightSidebarState.shared
+    @State private var lines: [String] = [
+        "Holos terminal — no shell session yet.",
+        "Lines echo locally; type `clear` to reset the buffer.",
+        "",
+    ]
+    @State private var input = ""
+
+    private let termGreen = Color(red: 0.38, green: 0.92, blue: 0.48)
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                RightContextPickerButton()
+                Text(rightState.context.label)
+                    .font(.system(.callout, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.8))
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+
+            Divider().opacity(0.12)
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                            Text(line)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(termGreen.opacity(line.isEmpty ? 0.2 : 0.92))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                        Color.clear.frame(height: 1).id("termBottom")
+                    }
+                    .padding(10)
+                }
+                .onChange(of: lines.count) { _ in
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        proxy.scrollTo("termBottom", anchor: .bottom)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(red: 0.04, green: 0.07, blue: 0.05))
+
+            Divider().opacity(0.12)
+
+            HStack(alignment: .center, spacing: 6) {
+                Text("%")
+                    .font(.system(.callout, design: .monospaced))
+                    .foregroundStyle(termGreen.opacity(0.75))
+                TextField("", text: $input, axis: .horizontal)
+                    .textFieldStyle(.plain)
+                    .font(.system(.callout, design: .monospaced))
+                    .foregroundStyle(termGreen)
+                    .onSubmit(commitInput)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color.black.opacity(0.45))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .preferredColorScheme(.dark)
+    }
+
+    private func commitInput() {
+        let t = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        input = ""
+        guard !t.isEmpty else { return }
+        if t == "clear" {
+            lines = [
+                "Buffer cleared.",
+                "",
+            ]
+            return
+        }
+        lines.append("% \(t)")
+        lines.append(t)
+        lines.append("")
     }
 }
