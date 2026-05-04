@@ -2049,7 +2049,13 @@ struct SidebarContentView: View {
             .allowsHitTesting(false)
         }
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            UnevenRoundedRectangle(
+                topLeadingRadius: 12,
+                bottomLeadingRadius: 12,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 0,
+                style: .continuous
+            )
                 .strokeBorder(HolosPanelChrome.verticalEdgeBorderGradient(nav: nav), lineWidth: HolosPanelChrome.borderLineWidth)
                 .mask(
                     HStack(spacing: 0) {
@@ -2403,7 +2409,13 @@ struct RightSidebarContentView: View {
             .ignoresSafeArea()
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 12,
+                topTrailingRadius: 12,
+                style: .continuous
+            )
                 .strokeBorder(HolosPanelChrome.verticalEdgeBorderGradient(nav: nav), lineWidth: HolosPanelChrome.borderLineWidth)
                 .animation(.easeInOut(duration: 0.18), value: nav.selectedSidebarCategory)
                 .animation(.easeInOut(duration: 0.18), value: nav.selectedTab)

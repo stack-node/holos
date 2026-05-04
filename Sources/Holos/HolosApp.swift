@@ -34,6 +34,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            PinManager.shared.saveMainWindowFrameForTermination()
+        }
+    }
+
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         guard let button = statusItem?.button else { return }

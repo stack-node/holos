@@ -15,6 +15,10 @@ final class PinManager: ObservableObject {
         if stored >= leftSidebarMinW && stored <= leftSidebarMaxW {
             sidebarW = stored
         }
+        let storedRight = UserDefaults.standard.double(forKey: Self.rightSidebarWidthKey)
+        if storedRight >= rightSidebarMinW && storedRight <= rightSidebarMaxW {
+            rightSidebarW = storedRight
+        }
         auxiliaryKeyObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification,
             object: nil,
@@ -92,6 +96,11 @@ final class PinManager: ObservableObject {
         toggle(near: rect)
     }
 
+    /// Flushes the main panel’s autosaved frame (e.g. on quit) so the last move/resize is not lost.
+    func saveMainWindowFrameForTermination() {
+        panel?.saveFrame(usingName: Self.mainWindowFrameAutosaveName)
+    }
+
     private static func fallbackAnchorRectForShortcut() -> NSRect {
         let width: CGFloat  = 380
         let height: CGFloat = 500
@@ -102,6 +111,20 @@ final class PinManager: ObservableObject {
         let x = vf.midX - width / 2
         let y = vf.midY - height / 2
         return NSRect(x: x, y: y, width: width, height: height)
+    }
+
+    private static let mainWindowFrameAutosaveName = "HolosMainWindow"
+
+    /// Keep a restored or initial main panel frame on at least one screen (e.g. after display layout changes).
+    private static func constrainMainPanelFrameToScreens(_ window: NSWindow) {
+        let frame = window.frame
+        let mid = NSPoint(x: frame.midX, y: frame.midY)
+        let screen = NSScreen.screens.first { $0.frame.contains(mid) } ?? NSScreen.main
+        guard let s = screen else { return }
+        let constrained = window.constrainFrameRect(frame, to: s)
+        if !NSEqualRects(constrained, frame) {
+            window.setFrame(constrained, display: false)
+        }
     }
 
     func show(near buttonRect: NSRect) {
@@ -142,6 +165,7 @@ final class PinManager: ObservableObject {
         p.isOpaque = false
         p.backgroundColor = .clear
         p.minSize = NSSize(width: 240, height: 1)
+        p.setFrameAutosaveName(Self.mainWindowFrameAutosaveName)
 
         let config = HolosConfig.shared
         let blur = MovableVisualEffectView()
@@ -191,6 +215,7 @@ final class PinManager: ObservableObject {
             }
             .store(in: &cancellables)
 
+        Self.constrainMainPanelFrameToScreens(p)
         p.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         panel = p
@@ -220,6 +245,7 @@ final class PinManager: ObservableObject {
 
     private static let isPinnedKey = "holos.windowPinned"
     private static let leftSidebarWidthKey = "holos.leftSidebarWidth"
+    private static let rightSidebarWidthKey = "holos.rightSidebarWidth"
 
     private static func loadIsPinnedFromDefaults() -> Bool {
         guard UserDefaults.standard.object(forKey: isPinnedKey) != nil else { return true }
@@ -246,6 +272,7 @@ final class PinManager: ObservableObject {
     func resizeRightSidebar(to width: CGFloat) {
         guard let main = panel, let sp = rightSidebarPanel else { return }
         rightSidebarW = min(rightSidebarMaxW, max(rightSidebarMinW, width))
+        UserDefaults.standard.set(rightSidebarW, forKey: Self.rightSidebarWidthKey)
         let frame = NSRect(
             x: main.frame.maxX + sidebarGap,
             y: sp.frame.minY,
@@ -480,6 +507,7 @@ final class PinManager: ObservableObject {
                     height: main.frame.height - self.sidebarInset * 2
                 ), display: true)
                 self.rightSidebarW = sp.frame.width
+                UserDefaults.standard.set(self.rightSidebarW, forKey: Self.rightSidebarWidthKey)
             }
         }
         rightResizeObserver = NotificationCenter.default.addObserver(
