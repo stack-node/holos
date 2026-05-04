@@ -2048,6 +2048,22 @@ struct SidebarContentView: View {
             .padding(.vertical, 14)
             .allowsHitTesting(false)
         }
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(HolosPanelChrome.verticalEdgeBorderGradient(nav: nav), lineWidth: HolosPanelChrome.borderLineWidth)
+                .mask(
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        Rectangle()
+                            .fill(Color.white)
+                            .padding(.trailing, HolosPanelChrome.sidebarTrailingStrokeMaskWidth)
+                    }
+                )
+                .allowsHitTesting(false)
+                .animation(.easeInOut(duration: 0.18), value: nav.selectedSidebarCategory)
+                .animation(.easeInOut(duration: 0.18), value: nav.selectedTab)
+                .animation(.easeInOut(duration: 0.18), value: nav.globalTab)
+        )
         .preferredColorScheme(.dark)
     }
 
@@ -2362,6 +2378,7 @@ final class RightSidebarState: ObservableObject {
 
 struct RightSidebarContentView: View {
     @ObservedObject private var config = HolosConfig.shared
+    @ObservedObject private var nav = NavigationState.shared
 
     var body: some View {
         HStack(spacing: 0) {
@@ -2387,7 +2404,10 @@ struct RightSidebarContentView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(HolosPanelChrome.mainWindowGradientTrailingColor, lineWidth: HolosPanelChrome.borderLineWidth)
+                .strokeBorder(HolosPanelChrome.verticalEdgeBorderGradient(nav: nav), lineWidth: HolosPanelChrome.borderLineWidth)
+                .animation(.easeInOut(duration: 0.18), value: nav.selectedSidebarCategory)
+                .animation(.easeInOut(duration: 0.18), value: nav.selectedTab)
+                .animation(.easeInOut(duration: 0.18), value: nav.globalTab)
         )
         .preferredColorScheme(.dark)
     }
