@@ -15,7 +15,7 @@ enum TitleBarLayout {
 
 enum SidebarCategory: String, CaseIterable, Hashable {
     case ai             = "AI"
-    case development    = "Development"
+    case development    = "Utilities"
     case versionControl = "Version Control"
     case system         = "System"
     case sound          = "Sound"
@@ -33,7 +33,14 @@ enum SidebarCategory: String, CaseIterable, Hashable {
         var seen = Set<String>()
         var result: [SidebarCategory] = []
         for s in raw {
-            let normalized = (s == "Music") ? SidebarCategory.sound.rawValue : s
+            let normalized: String
+            if s == "Music" {
+                normalized = SidebarCategory.sound.rawValue
+            } else if s == "Development" {
+                normalized = SidebarCategory.development.rawValue
+            } else {
+                normalized = s
+            }
             guard let c = SidebarCategory(rawValue: normalized), seen.insert(c.rawValue).inserted else { continue }
             result.append(c)
         }
@@ -131,34 +138,21 @@ private enum SidebarNavPalette {
 enum HolosPanelChrome {
     static let borderLineWidth: CGFloat = 0.8
 
-    /// Leading stop of `borderGradient` — left edge of the main panel (purple).
-    static let mainWindowGradientLeadingColor = Color(red: 0.55, green: 0.25, blue: 0.95).opacity(0.7)
-    /// Trailing stop of `borderGradient` — right edge of the main panel (cyan).
+    /// Trailing accent for panels that meet the main window (e.g. right sidebar outer edge).
     static let mainWindowGradientTrailingColor = Color(red: 0.2, green: 0.85, blue: 1.0).opacity(0.6)
 
-    static var borderGradient: LinearGradient {
-        LinearGradient(
-            stops: [
-                .init(color: mainWindowGradientLeadingColor, location: 0),
-                .init(color: Color(red: 0.9, green: 0.3, blue: 0.6).opacity(0.5), location: 0.25),
-                .init(color: Color(red: 0.5, green: 0.3, blue: 0.75).opacity(0.15), location: 0.5),
-                .init(color: Color(red: 0.1, green: 0.7, blue: 0.7).opacity(0.5), location: 0.75),
-                .init(color: mainWindowGradientTrailingColor, location: 1),
-            ],
-            startPoint: .leading,
-            endPoint: .trailing
-        )
-    }
+    /// Leading / trailing region for contextual edge borders + matching hairline / glow (wider than corner radius so corners read as one continuous accent).
+    static let mainWindowLeftBorderBandWidth: CGFloat = 44
+    static var mainWindowRightBorderBandWidth: CGFloat { mainWindowLeftBorderBandWidth }
 
-    /// Leading strip width for the contextual left border (corner radius + stroke).
-    static let mainWindowLeftBorderBandWidth: CGFloat = 22
-    /// Standard gradient stroke starts here so it overlaps the left band slightly (no seam).
-    static let mainWindowStandardBorderLeadingInset: CGFloat = 18
+    /// Sidebar overlay: hide this much on the **trailing** edge so we don’t double the line against the main window’s left border.
+    static let sidebarTrailingStrokeMaskWidth: CGFloat = borderLineWidth * 2.5
 
     /// Matches sidebar category (top) → selected page / global item (bottom); main window left band + left sidebar outline.
     static let leftEdgeVerticalBorderAccentOpacity: CGFloat = 0.88
 
-    static func leftEdgeVerticalBorderGradient(nav: NavigationState) -> LinearGradient {
+    /// Category (top) → selected page accent (bottom); used on **both** main window vertical edges.
+    static func verticalEdgeBorderGradient(nav: NavigationState) -> LinearGradient {
         LinearGradient(
             colors: [
                 nav.selectedSidebarCategory.color.opacity(Self.leftEdgeVerticalBorderAccentOpacity),
@@ -168,9 +162,13 @@ enum HolosPanelChrome {
             endPoint: .bottom
         )
     }
+
+    static func leftEdgeVerticalBorderGradient(nav: NavigationState) -> LinearGradient {
+        verticalEdgeBorderGradient(nav: nav)
+    }
 }
 
-// MARK: - Main window split chrome border (left edge contextual, rest unchanged)
+// MARK: - Main window left edge chrome (contextual dynamic border)
 
 private struct MainWindowSplitChromeBorder: View {
     @ObservedObject var nav: NavigationState
@@ -178,24 +176,23 @@ private struct MainWindowSplitChromeBorder: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(HolosPanelChrome.borderGradient, lineWidth: HolosPanelChrome.borderLineWidth)
-                .mask(
-                    HStack(spacing: 0) {
-                        Color.clear
-                            .frame(width: HolosPanelChrome.mainWindowStandardBorderLeadingInset)
-                        Rectangle()
-                            .fill(Color.white)
-                    }
-                )
-
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(HolosPanelChrome.leftEdgeVerticalBorderGradient(nav: nav), lineWidth: HolosPanelChrome.borderLineWidth)
+                .strokeBorder(HolosPanelChrome.verticalEdgeBorderGradient(nav: nav), lineWidth: HolosPanelChrome.borderLineWidth)
                 .mask(
                     HStack(spacing: 0) {
                         Rectangle()
                             .fill(Color.white)
                             .frame(width: HolosPanelChrome.mainWindowLeftBorderBandWidth)
                         Spacer(minLength: 0)
+                    }
+                )
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(HolosPanelChrome.verticalEdgeBorderGradient(nav: nav), lineWidth: HolosPanelChrome.borderLineWidth)
+                .mask(
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        Rectangle()
+                            .fill(Color.white)
+                            .frame(width: HolosPanelChrome.mainWindowRightBorderBandWidth)
                     }
                 )
         }
@@ -254,15 +251,22 @@ struct MenuBarView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .zIndex(0)
 
-            // Bottom edge of drag zone — same gradient + weight as the panel border.
-            Rectangle()
-                .fill(HolosPanelChrome.borderGradient)
-                .frame(height: HolosPanelChrome.borderLineWidth)
-                .frame(maxWidth: .infinity)
-                .padding(.top, TitleBarLayout.dragStripHeight - HolosPanelChrome.borderLineWidth)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .allowsHitTesting(false)
-                .zIndex(0.25)
+            // Bottom edge of drag zone — contextual bands at left + right (`liquidGlassEdge` supplies the animated outer frame).
+            HStack(spacing: 0) {
+                Rectangle()
+                    .fill(nav.selectedSidebarCategory.color.opacity(HolosPanelChrome.leftEdgeVerticalBorderAccentOpacity))
+                    .frame(width: HolosPanelChrome.mainWindowLeftBorderBandWidth)
+                Spacer(minLength: 0)
+                Rectangle()
+                    .fill(nav.selectedSidebarCategory.color.opacity(HolosPanelChrome.leftEdgeVerticalBorderAccentOpacity))
+                    .frame(width: HolosPanelChrome.mainWindowRightBorderBandWidth)
+            }
+            .frame(height: HolosPanelChrome.borderLineWidth)
+            .frame(maxWidth: .infinity)
+            .padding(.top, TitleBarLayout.dragStripHeight - HolosPanelChrome.borderLineWidth)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .allowsHitTesting(false)
+            .zIndex(0.25)
 
             // Content
             VStack(spacing: 0) {
@@ -366,6 +370,8 @@ struct MenuBarView: View {
                     let edgeH = glow * 2.5
                     let edgeW = glow * 2.5
                     let op = (0.28 + edgePhase * 0.10) * intensity
+                    let bandL = HolosPanelChrome.mainWindowLeftBorderBandWidth
+                    let bandR = HolosPanelChrome.mainWindowRightBorderBandWidth
                     let hGrad = Gradient(stops: [
                         .init(color: Color(red: 0.55, green: 0.25, blue: 0.95).opacity(op), location: 0.00),
                         .init(color: Color(red: 0.9,  green: 0.3,  blue: 0.6 ).opacity(op), location: 0.25),
@@ -373,7 +379,10 @@ struct MenuBarView: View {
                         .init(color: Color(red: 0.1,  green: 0.7,  blue: 0.7 ).opacity(op), location: 0.75),
                         .init(color: Color(red: 0.2,  green: 0.85, blue: 1.0 ).opacity(op), location: 1.00),
                     ])
-                    // Top edge — full-width gradient strip
+                    let catOp = nav.selectedSidebarCategory.color.opacity(op)
+                    let pageOp = SidebarNavPalette.pageAccentColor(nav: nav).opacity(op)
+                    let vGrad = Gradient(colors: [catOp, pageOp])
+                    // Top edge — rainbow strip with contextual bands overdrawing leading + trailing (matches split border).
                     ctx.drawLayer { c in
                         c.addFilter(.blur(radius: blur * 1.4))
                         c.fill(Path(CGRect(x: 0, y: -edgeH * 0.5, width: size.width, height: edgeH)),
@@ -382,7 +391,17 @@ struct MenuBarView: View {
                                    endPoint: CGPoint(x: size.width, y: 0),
                                    options: []))
                     }
-                    // Bottom edge — full-width gradient strip
+                    ctx.drawLayer { c in
+                        c.addFilter(.blur(radius: blur * 1.4))
+                        c.fill(Path(CGRect(x: 0, y: -edgeH * 0.5, width: bandL, height: edgeH)),
+                               with: .color(catOp))
+                    }
+                    ctx.drawLayer { c in
+                        c.addFilter(.blur(radius: blur * 1.4))
+                        c.fill(Path(CGRect(x: size.width - bandR, y: -edgeH * 0.5, width: bandR, height: edgeH)),
+                               with: .color(catOp))
+                    }
+                    // Bottom edge — same idea (bands = page accent / bottom of vertical borders).
                     ctx.drawLayer { c in
                         c.addFilter(.blur(radius: blur * 1.4))
                         c.fill(Path(CGRect(x: 0, y: size.height - edgeH * 0.5, width: size.width, height: edgeH)),
@@ -391,17 +410,32 @@ struct MenuBarView: View {
                                    endPoint: CGPoint(x: size.width, y: 0),
                                    options: []))
                     }
-                    // Left edge — purple, full height
+                    ctx.drawLayer { c in
+                        c.addFilter(.blur(radius: blur * 1.4))
+                        c.fill(Path(CGRect(x: 0, y: size.height - edgeH * 0.5, width: bandL, height: edgeH)),
+                               with: .color(pageOp))
+                    }
+                    ctx.drawLayer { c in
+                        c.addFilter(.blur(radius: blur * 1.4))
+                        c.fill(Path(CGRect(x: size.width - bandR, y: size.height - edgeH * 0.5, width: bandR, height: edgeH)),
+                               with: .color(pageOp))
+                    }
+                    // Left / right edges — same vertical contextual gradient as the hairline border stroke.
                     ctx.drawLayer { c in
                         c.addFilter(.blur(radius: blur * 1.4))
                         c.fill(Path(CGRect(x: -edgeW * 0.5, y: 0, width: edgeW, height: size.height)),
-                               with: .color(Color(red: 0.55, green: 0.25, blue: 0.95).opacity(op)))
+                               with: .linearGradient(vGrad,
+                                   startPoint: CGPoint(x: 0, y: 0),
+                                   endPoint: CGPoint(x: 0, y: size.height),
+                                   options: []))
                     }
-                    // Right edge — cyan, full height
                     ctx.drawLayer { c in
                         c.addFilter(.blur(radius: blur * 1.4))
                         c.fill(Path(CGRect(x: size.width - edgeW * 0.5, y: 0, width: edgeW, height: size.height)),
-                               with: .color(Color(red: 0.2, green: 0.85, blue: 1.0).opacity(op)))
+                               with: .linearGradient(vGrad,
+                                   startPoint: CGPoint(x: 0, y: 0),
+                                   endPoint: CGPoint(x: 0, y: size.height),
+                                   options: []))
                     }
                 } else {
                     let colors = glowColors
@@ -492,19 +526,23 @@ struct MenuBarView: View {
         }()
         let title = placeholderTabTitle(for: tab)
         return AnyView(
-            VStack(spacing: 14) {
-                Image(systemName: meta.icon)
-                    .font(.system(size: 36, weight: .light))
-                    .foregroundStyle(meta.color.opacity(0.5))
-                Text(title)
-                    .font(.system(.title3, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.35))
-                Text("Coming soon")
-                    .font(.system(.caption))
-                    .foregroundStyle(.white.opacity(0.2))
+            VStack(spacing: 0) {
+                Color.clear.frame(height: TitleBarLayout.dragStripHeight)
+                Spacer(minLength: 0)
+                VStack(spacing: 14) {
+                    Image(systemName: meta.icon)
+                        .font(.system(size: 36, weight: .light))
+                        .foregroundStyle(meta.color.opacity(0.5))
+                    Text(title)
+                        .font(.system(.title3, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.35))
+                    Text("Coming soon")
+                        .font(.system(.caption))
+                        .foregroundStyle(.white.opacity(0.2))
+                }
+                Spacer(minLength: 0)
             }
-            .padding(.top, 52)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         )
     }
 
@@ -520,19 +558,23 @@ struct MenuBarView: View {
             }
         }()
         return AnyView(
-            VStack(spacing: 14) {
-                Image(systemName: meta.icon)
-                    .font(.system(size: 36, weight: .light))
-                    .foregroundStyle(meta.color.opacity(0.5))
-                Text(tab)
-                    .font(.system(.title3, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.35))
-                Text("Coming soon")
-                    .font(.system(.caption))
-                    .foregroundStyle(.white.opacity(0.2))
+            VStack(spacing: 0) {
+                Color.clear.frame(height: TitleBarLayout.dragStripHeight)
+                Spacer(minLength: 0)
+                VStack(spacing: 14) {
+                    Image(systemName: meta.icon)
+                        .font(.system(size: 36, weight: .light))
+                        .foregroundStyle(meta.color.opacity(0.5))
+                    Text(tab)
+                        .font(.system(.title3, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.35))
+                    Text("Coming soon")
+                        .font(.system(.caption))
+                        .foregroundStyle(.white.opacity(0.2))
+                }
+                Spacer(minLength: 0)
             }
-            .padding(.top, 52)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         )
     }
 
@@ -1360,6 +1402,13 @@ struct SidebarContentView: View {
                 topTrailingRadius: 0
             )
             .strokeBorder(HolosPanelChrome.leftEdgeVerticalBorderGradient(nav: nav), lineWidth: HolosPanelChrome.borderLineWidth)
+            .mask(
+                HStack(spacing: 0) {
+                    Rectangle().fill(Color.white)
+                    Color.clear
+                        .frame(width: HolosPanelChrome.sidebarTrailingStrokeMaskWidth)
+                }
+            )
             .animation(.easeInOut(duration: 0.18), value: nav.selectedSidebarCategory)
             .animation(.easeInOut(duration: 0.18), value: nav.selectedTab)
             .animation(.easeInOut(duration: 0.18), value: nav.globalTab)
